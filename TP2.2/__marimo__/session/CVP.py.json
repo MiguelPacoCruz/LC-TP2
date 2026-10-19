@@ -1,0 +1,48 @@
+{
+  "version": "1",
+  "metadata": {
+    "marimo_version": "0.25.1",
+    "script_metadata_hash": null
+  },
+  "cells": [
+    {
+      "id": "setup",
+      "code_hash": "1d0db38904205bec4d6f6f6a1f6cec3e",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ykNe",
+      "code_hash": "7745ace588cf94b466b0efbc007154f7",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><span class=\"paragraph\">Este exerc\u00edcio \u00e9 um problema de optimiza\u00e7\u00e3o n\u00e3o linear c\u00f3nica que deve ser resolvido com o \u201csolver\u201d <code>Clarabel</code> e a interface <code>cvxpy</code>. Note que o <code>Clarabel</code> n\u00e3o lida com vari\u00e1veis inteiras.</span>\n<span class=\"paragraph\">Em criptografia p\u00f3s-qu\u00e2ntica \u00e9 importante um tipo de subconjuntos do espa\u00e7o m\u00e9trico <marimo-tex class=\"arithmatex\">||(\\mathbb{R}^m||)</marimo-tex> designados por reticulados euclidianos. Cada espa\u00e7o \u00e9 determinado por uma base de <marimo-tex class=\"arithmatex\">||(k||)</marimo-tex> vetores:</span>\n<marimo-tex class=\"arithmatex\">||[\n\\mathsf{G} \\equiv \\{g_1, g_2, \\cdots, g_k \\mid g_i \\in \\mathbb{R}^m\\}\n||]</marimo-tex><span class=\"paragraph\">linearmente independentes. O reticulado determinado por <marimo-tex class=\"arithmatex\">||(\\mathsf{G}||)</marimo-tex> \u00e9 o conjunto de todas as combina\u00e7\u00f5es lineares inteiras dos vetores <marimo-tex class=\"arithmatex\">||(g_i||)</marimo-tex>. Isto \u00e9,</span>\n<marimo-tex class=\"arithmatex\">||[\n\\mathcal{L}_{\\mathsf{G}} \\equiv \\{x = z_1 g_1 + z_2 g_2 + \\cdots + z_\\kappa g_\\kappa \\mid z_i \\in \\mathbb{Z}\\}\n||]</marimo-tex><span class=\"paragraph\">O problema dif\u00edcil que est\u00e1 na base de muitas das t\u00e9cnicas criptogr\u00e1ficas p\u00f3s-qu\u00e2nticas designa-se por <em>Closest Vector Problem</em> (CVP) e define-se:</span>\n<blockquote>\n<span class=\"paragraph\">Dado um vetor aleat\u00f3rio <marimo-tex class=\"arithmatex\">||(t \\in \\mathbb{R}^m||)</marimo-tex> (o \u201ctarget\u201d) e um reticulado determinado pela base <marimo-tex class=\"arithmatex\">||(\\mathsf{G}||)</marimo-tex>, calcular o vetor do reticulado</span>\n</blockquote>\n<marimo-tex class=\"arithmatex\">||[\nx \\in \\mathcal{L}_{\\mathsf{G}} = \\sum_{i=1}^{\\kappa} z_i g_i\n||]</marimo-tex><span class=\"paragraph\">que est\u00e1 mais pr\u00f3ximo de <marimo-tex class=\"arithmatex\">||(t||)</marimo-tex>.</span>\n<span class=\"paragraph\">Neste exerc\u00edcio vamos considerar uma vers\u00e3o particular deste problema, caracterizada pelas seguintes restri\u00e7\u00f5es:</span>\n<ul>\n<li>\n<span class=\"paragraph\">A proximidade define-se pela dist\u00e2ncia Euclidiana no espa\u00e7o <marimo-tex class=\"arithmatex\">||(\\mathbb{R}^m||)</marimo-tex>; isto \u00e9,</span>\n<marimo-tex class=\"arithmatex\">||[\n\\mathsf{dist}(x,t) \\equiv \\sqrt{\\sum_{j=1}^{m}(x_j-t_j)^2}\n||]</marimo-tex><span class=\"paragraph\">sendo <marimo-tex class=\"arithmatex\">||(x_j||)</marimo-tex> a <marimo-tex class=\"arithmatex\">||(j||)</marimo-tex>-\u00e9sima componente do vetor <marimo-tex class=\"arithmatex\">||(x||)</marimo-tex>.</span>\n</li>\n<li>\n<span class=\"paragraph\">Os elementos <marimo-tex class=\"arithmatex\">||(\\{g_{i,j}\\}||)</marimo-tex> do vetor <marimo-tex class=\"arithmatex\">||(g_i||)</marimo-tex>, assim como os elementos <marimo-tex class=\"arithmatex\">||(t_j||)</marimo-tex> do \u201ctarget\u201d <marimo-tex class=\"arithmatex\">||(t||)</marimo-tex>, representam probabilidades; por isso, s\u00e3o sempre valores reais no intervalo</span>\n<marimo-tex class=\"arithmatex\">||[\n0 \\leq g_{i,j},\\,t_j \\leq 1\n||]</marimo-tex><span class=\"paragraph\">que, aqui, s\u00e3o gerados aleatoriamente.</span>\n</li>\n<li>\n<span class=\"paragraph\">Existe um limite <marimo-tex class=\"arithmatex\">||(\\ell||)</marimo-tex> positivo n\u00e3o nulo nos coeficientes inteiros <marimo-tex class=\"arithmatex\">||(z_i||)</marimo-tex>, tal que, para todo <marimo-tex class=\"arithmatex\">||(i = 1, \\ldots, \\kappa||)</marimo-tex>, se verifica</span>\n<marimo-tex class=\"arithmatex\">||[\n-\\ell \\leq z_i \\leq \\ell\n||]</marimo-tex></li>\n<li>\u00c9 necess\u00e1rio verificar se os <marimo-tex class=\"arithmatex\">||(\\{g_i\\}_{i=1}^{k}||)</marimo-tex> formam realmente uma base.</li>\n</ul>\n<span class=\"paragraph\">Nestas circunst\u00e2ncias, pretende-se usar programa\u00e7\u00e3o c\u00f3nica para resolver o CVP.</span>\n<blockquote>\n<span class=\"paragraph\">Em problemas CVP criptograficamente seguros, os valores t\u00edpicos de <marimo-tex class=\"arithmatex\">||(m||)</marimo-tex> e <marimo-tex class=\"arithmatex\">||(k||)</marimo-tex> s\u00e3o da ordem das centenas. Aqui vamos considerar uma situa\u00e7\u00e3o em que <marimo-tex class=\"arithmatex\">||(m \\sim 30||)</marimo-tex>, <marimo-tex class=\"arithmatex\">||(k \\sim 10||)</marimo-tex> e <marimo-tex class=\"arithmatex\">||(\\ell = 1, \\cdots, 5||)</marimo-tex>.</span>\n</blockquote></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "LkSz",
+      "code_hash": "9a72bae4a518a562e2009828f313e44f",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"justificacao-da-escolha-do-exercicio\">Justifica\u00e7\u00e3o da escolha do exerc\u00edcio</h2>\n<span class=\"paragraph\">Opt\u00e1mos pelo Exerc\u00edcio 2 (CVP via programa\u00e7\u00e3o c\u00f3nica) por tr\u00eas raz\u00f5es.</span>\n<h3 id=\"1-continuidade-com-a-aula-tp-de-1910\">1. Continuidade com a aula TP de 19/10</h3>\n<span class=\"paragraph\">Nessa aula, lecionada pelo professor Bruno, foi resolvido um problema de otimiza\u00e7\u00e3o c\u00f3nica de portf\u00f3lios com <code>cvxpy</code> e o solver <code>Clarabel</code>. O risco foi modelado como perten\u00e7a a um cone de segunda ordem (<code>cp.SOC</code>), atrav\u00e9s de uma vari\u00e1vel epigr\u00e1fica <marimo-tex class=\"arithmatex\">||(t \\geq \\|\\Sigma^{1/2} w\\|_2||)</marimo-tex>. Foram ainda trabalhados a reutiliza\u00e7\u00e3o de um problema com <code>cp.Parameter</code> e a leitura das vari\u00e1veis duais.</span>\n<span class=\"paragraph\">O CVP tem a mesma estrutura de base: a dist\u00e2ncia Euclidiana <marimo-tex class=\"arithmatex\">||(\\|Gz - t\\|_2||)</marimo-tex> \u00e9, tal como o risco no portf\u00f3lio, uma norma que se escreve diretamente como restri\u00e7\u00e3o c\u00f3nica. Isto permitiu-nos partir de uma formula\u00e7\u00e3o j\u00e1 conhecida.</span>\n<h3 id=\"2-ligacao-ao-problema-inteiro-tratado-no-fim-da-aula\">2. Liga\u00e7\u00e3o ao problema inteiro tratado no fim da aula</h3>\n<span class=\"paragraph\">A sec\u00e7\u00e3o final do notebook introduziu restri\u00e7\u00f5es de cardinalidade com vari\u00e1veis booleanas, resolvidas por <em>branch-and-bound</em> sobre a relaxa\u00e7\u00e3o SOCP cont\u00ednua em cada n\u00f3, com o <code>SCIP</code> como solver.</span>\n<span class=\"paragraph\">O Exerc\u00edcio 2 coloca um problema an\u00e1logo: a condi\u00e7\u00e3o <marimo-tex class=\"arithmatex\">||(z_i \\in \\mathbb{Z}||)</marimo-tex> torna o problema dif\u00edcil e, como o <code>Clarabel</code> n\u00e3o suporta vari\u00e1veis inteiras, a integralidade tem de ser tratada por n\u00f3s, resolvendo a relaxa\u00e7\u00e3o cont\u00ednua em cada n\u00f3. O exerc\u00edcio permite, assim, aprofundar uma ideia que na aula foi apenas apresentada com uma demonstra\u00e7\u00e3o em ponto pequeno.</span>\n<h3 id=\"3-objetividade-na-validacao\">3. Objetividade na valida\u00e7\u00e3o</h3>\n<span class=\"paragraph\">A condi\u00e7\u00e3o de base reduz-se a <marimo-tex class=\"arithmatex\">||(\\operatorname{rank}(G) = k||)</marimo-tex> e, para valores pequenos de <marimo-tex class=\"arithmatex\">||(k||)</marimo-tex> e <marimo-tex class=\"arithmatex\">||(\\ell||)</marimo-tex>, a solu\u00e7\u00e3o pode ser comparada com pesquisa exaustiva. Isto permite validar a implementa\u00e7\u00e3o e analisar o desempenho (n\u00f3s explorados, tempo de execu\u00e7\u00e3o, efeito de <marimo-tex class=\"arithmatex\">||(\\ell||)</marimo-tex> e de <marimo-tex class=\"arithmatex\">||(k||)</marimo-tex>).</span>\n<h3 id=\"porque-nao-o-exercicio-1\">Porque n\u00e3o o Exerc\u00edcio 1</h3>\n<span class=\"paragraph\">A segunda propriedade do Exerc\u00edcio 1 (nenhuma c\u00e9lula permanentemente morta ou viva) \u00e9 uma propriedade de vivacidade, que exige racioc\u00ednio sobre ciclos e, no caso ass\u00edncrono, hip\u00f3teses de justi\u00e7a. Somado \u00e0 necessidade de modelar duas sem\u00e2nticas de transi\u00e7\u00e3o distintas, isto tornava o \u00e2mbito do trabalho mais incerto.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    }
+  ]
+}
