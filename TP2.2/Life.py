@@ -6,9 +6,11 @@ app = marimo.App(width="medium")
 with app.setup:
     import marimo as mo
     import pandas as pd
-    from random import random,randint
-    import pysmt.shortcuts 
-    from pysmt.typing import INT
+    from random import random, randint
+    from z3 import (
+        Solver, Bool, And, Or, Not, If, Sum,
+        sat, is_true
+    )
 
 
 @app.cell(hide_code=True)
@@ -20,18 +22,18 @@ def _():
 
 
 @app.function
-def init(n: int):
+def initW(n: int):
     if not n > 16:
         raise ValueError("N must be greater than 16")
     matriz = [[0] * n for _ in range(n)]
-    matriz = b(matriz)
-    matriz = cel_fin(matriz)
-    matriz = cel_ini(matriz)
+    matriz = bW(matriz)
+    matriz = cel_finW(matriz)
+    matriz = cel_iniW(matriz)
     return matriz
 
 
 @app.function
-def b(matriz):
+def bW(matriz):
     for i in range(4):
         for j in range(4):
             matriz[i][j] = 1
@@ -39,7 +41,7 @@ def b(matriz):
 
 
 @app.function
-def cel_fin(matriz):
+def cel_finW(matriz):
     n = len(matriz)
     matriz.append([0] * n)
     
@@ -50,7 +52,7 @@ def cel_fin(matriz):
 
 
 @app.function
-def cel_ini(matriz):
+def cel_iniW(matriz):
     n = len(matriz)
     counter = 0
     for i in range(n):
@@ -63,7 +65,7 @@ def cel_ini(matriz):
 
 
 @app.function
-def display_matrix(matriz):
+def display_matrixW(matriz):
     n = len(matriz)
     width = len(str(n - 1)) + 2
 
@@ -81,7 +83,7 @@ def display_matrix(matriz):
 
 @app.cell
 def _():
-    display_matrix(init(20))
+    display_matrixW(initW(20))
     return
 
 
@@ -93,72 +95,125 @@ def _():
     return
 
 
-@app.cell
-def _(Bool):
-    def declare(t, N):
-        return {
-            (i, j): Bool(f'cell_{i}_{j}_{t}')
-            for i in range(1, N + 1)
-            for j in range(1, N + 1)
-        }
-
-    return (declare,)
-
-
-@app.cell
-def _(And, Not):
-    def init(state, N):
-        return And(
-            # Células (i,j) com i,j <= 3 estão vivas
-            *[
-                state[(i, j)] if i <= 3 and j <= 3
-                else Not(state[(i, j)])
-                for i in range(1, N + 1)
-                for j in range(1, N + 1)
-            ]
-        )
-
-    return (init,)
-
-
 @app.function
-def initial_cells(N):
+def declare(t, N):
+    if not N > 16:
+        raise ValueError("N must be greater than 16")
     return {
-        (i, j): random() < 0.5
-        for i in range(N + 1)
-        for j in range(N + 1)
-        if (i == 0 or j == 0)
+        (i, j): Bool(f'cell_{i}_{j}_{t}')
+        for i in range(0, N + 2)
+        for j in range(0, N + 2)
     }
 
 
-@app.cell
-def _(And, Solver, declare, i, j, states, trans):
-    def gera(declare,init,trans,k):
+@app.function
+def init(state, N):
+    constraints = []
+    for i in range(1, N + 2):
+        for j in range(1, N + 2):
+            if i <= 3 and j <= 3:
+                constraints.append(state[(i, j)])
+            else:
+                constraints.append(Not(state[(i, j)]))
+    return And(constraints)
 
-        with Solver(name="z3") as s:
-            # completar
-            matriz = [i for i in range(k+2)]
+
+@app.function
+def initial_final_cells(state, N):
+    constraints = []
+
+    for i in range(N + 1):
+        constraints.append(
+            state[(i, 0)] if random() < 0.5
+            else Not(state[(i, 0)])
+        )
+
+    for j in range(1, N + 1):
+        constraints.append(
+            state[(0, j)] if random() < 0.5
+            else Not(state[(0, j)])
+        )
+
+    for i in range(N + 2):
+        constraints.append(Not(state[(i, N + 1)]))
+
+    for j in range(N + 1):
+        constraints.append(Not(state[(N + 1, j)]))
+
+    return And(constraints)
+
+
+@app.function
+def trans(curr, prox, N):
+    constraints = []
+
+    # Células iniciais: mantêm o seu valor
+    for i in range(N + 1):
+        constraints.append(prox[(i, 0)] == curr[(i, 0)])
+
+    for j in range(1, N + 1):
+        constraints.append(prox[(0, j)] == curr[(0, j)])
+
+    # Células finais: permanecem mortas
+    for i in range(N + 2):
+        constraints.append(Not(prox[(i, N + 1)]))
+
+    for j in range(N + 1):
+        constraints.append(Not(prox[(N + 1, j)]))
+
+    # Regra do Game of Life para as células normais
+    for i in range(1, N + 1):
+        for j in range(1, N + 1):
+            vizinhos = Sum([
+                If(curr[(i + di, j + dj)], 1, 0)
+                for di in range(-1, 2)
+                for dj in range(-1, 2)
+                if di != 0 or dj != 0
+            ])
+
+            constraints.append(
+                prox[(i, j)] == Or(
+                    vizinhos == 3,
+                    And(curr[(i, j)], vizinhos == 2)
+                )
+            )
+
+    return And(constraints)
+
+
+@app.cell
+def _():
+
+    def gera(declare, init, initial_final_cells, trans, N, k):
+        with Solver() as s:
+            states = [declare(t, N) for t in range(k + 1)]
 
             constraints = []
-        
-            constraints.append(init(matriz,i,j))
 
-            for i in range(k-1):
-                constraints.append(trans(states[i],states[i+1]))
+            constraints.append(init(states[0], N))
+            constraints.append(initial_final_cells(states[0], N))
 
-            s.add_assertion(And(constraints))
+            for t in range(k):
+                constraints.append(trans(states[t], states[t + 1], N))
 
-            if s.solve():
-                model = s.get_model()
-                #print(model)
-                for i, st in enumerate(states):
-                    pc_val = model.get_value(st['pc'])
-                    x_val = model.get_value(st['x'])
-                    print(f'Estado {i}: pc = {pc_val}, x = {x_val}')
+            s.add(And(constraints))
+
+            if s.check() == sat:
+                model = s.model()
+
+                for t, state in enumerate(states):
+                    print(f"Estado {t}:")
+                    for i in range(1, N + 1):
+                        linha = [
+                            1 if is_true(model.eval(state[(i, j)], model_completion=True)) else 0
+                            for j in range(1, N + 1)
+                        ]
+                        print(linha)
+                    print()
             else:
-                print("Não foi encontrado um traço válido")
-                
-    gera(declare,init,trans,20)
+                print("Não foi encontrado um traço válido.")
+
+    gera(declare, init, initial_final_cells, trans, 17, 5)
     return
 
 
