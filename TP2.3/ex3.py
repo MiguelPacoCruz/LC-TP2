@@ -31,5 +31,50 @@ def _():
     return
 
 
+@app.cell
+def _():
+    from z3 import *
+
+    n = 16
+    INIT, SKIP, LEFT, RIGHT, STOP, ERROR = 0, 1, 2, 3, 4, 5
+
+    def declare(i):
+        state = {}
+        state['pc'] = Int(f'pc_{i}')
+        state['a'] = BitVec(f'a_{i}', n)
+        state['b'] = BitVec(f'b_{i}', n)
+        state['x'] = BitVec(f'x_{i}', n)
+        state['y'] = BitVec(f'y_{i}', n)
+        state['z'] = BitVec(f'z_{i}', n)
+        return state
+
+    #decidi passar o valores de x y e z ja diretamente na funçao
+    def init(state):
+        return And(
+            state['pc'] == INIT, 
+            state['x'] == state['a'], 
+            state['y'] == state['b'], 
+            state['z'] == 0,
+            state['a'] >= 0, 
+            state['b'] >= 0
+        )
+
+    def trans(curr,prox):
+        #entradas a e b nunca mudam
+        keep_a_b = And(prox['a'] == curr['a'], prox['b'] == curr['b'])
+
+        # 0. INIT para SKIP (Mantém os valores porque o init já os carregou)
+        t_init = And(curr['pc'] == INIT, prox['pc'] == SKIP,
+                     prox['x'] == curr['x'], prox['y'] == curr['y'], prox['z'] == curr['z'])
+        
+        # Na representação binária de números, qualquer valor 
+        # cujo último bit seja 0 é obrigatoriamente um número par (1 para impar)
+        is_even = Extract(0,0,'y') == 0
+        
+        return keep_a_b, t_init, is_even
+
+    return ERROR, INIT, LEFT, RIGHT, SKIP, STOP, declare, init, n, trans
+
+
 if __name__ == "__main__":
     app.run()
