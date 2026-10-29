@@ -70,8 +70,24 @@ def _():
         # Na representação binária de números, qualquer valor 
         # cujo último bit seja 0 é obrigatoriamente um número par (1 para impar)
         is_even = Extract(0,0,'y') == 0
-        
-        return keep_a_b, t_init, is_even
+                          # Pre-condiçao
+        t_skip_stop = And(curr['pc'] == SKIP, curr['y'] == 0, 
+                          # Atualização
+                          prox['pc'] == STOP, 
+                          #Manutenção
+                          prox['x'] == curr['x'], prox['y'] == curr['y'], prox['z'] == curr['z']
+                          )
+
+        t_skip_left = And(curr['pc'] == SKIP, curr['y']!=0, is_even,
+                          prox['pc'] == LEFT,
+                          prox['x'] == curr['x'], prox['y'] == curr['y'], prox['z'] == curr['z']
+                          )
+        t_skip_right = And(curr['pc'] == SKIP, curr['y']!=0, Not(is_even), 
+                           prox['pc'] == RIGHT,
+                           prox['x'] == curr['x'], prox['y'] == curr['y'], prox['z'] == curr['z']
+                           )
+
+        return keep_a_b, t_init, is_even, t_skip_stop, t_skip_left, t_skip_right
 
     return ERROR, INIT, LEFT, RIGHT, SKIP, STOP, declare, init, n, trans
 
