@@ -13,21 +13,24 @@ with app.setup:
     )
     from pysmt.typing import BOOL
 
+    # relação de transição usada por defeito: "sync" ou "async"
+    MODO = "sync"
+
 
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
     # Game of Life com espaço de estados finito
 
-    O autómato é modelado como um *first-order transition system* (FOTS): um predicado `init` sobre o estado inicial e um predicado `trans` sobre o par (pré-estado, pós-estado). Primeiro formula-se a relação de transição em lógica; depois implementa-se em pySMT, com o modo de transição (síncrono ou assíncrono) escolhido por parâmetro. A estrutura segue a da ficha 7 (FOTS, `declare`/`init`/`trans`, `gera_traco` e `bmc_always`), e os comentários indicam o exercício de origem.
+    O autómato é modelado como um *first-order transition system* (FOTS): um predicado `init` sobre o estado inicial e um predicado `trans` sobre o par (pré-estado, pós-estado). Primeiro formula-se a relação de transição em lógica; depois implementa-se em pySMT, com o modo de transição (síncrono ou assíncrono) escolhido pela constante `MODO`, definida no início do notebook. A estrutura segue a da ficha 7 (FOTS, `declare`/`init`/`trans`, `gera_traco` e `bmc_always`); os exercícios de origem são indicados ao longo do texto.
 
     ## Formulação lógica
 
     **Estado.** Cada célula é uma variável booleana $c_{i,j}$ (e $c'_{i,j}$ no pós-estado), com $0 \le i,j \le N+1$. Os três tipos de célula são:
 
     - normais: $\mathcal{N}=\{1..N\}^2$
-    - iniciais: $\mathcal{I}=\{(i,j) : i=0 \vee j=0\}$, em número $2N+1$
-    - finais: $\mathcal{F}$, com $i=N+1$ ou $j=N+1$ e que não são iniciais, em número $2N+3$
+    - iniciais: $\mathcal{I}=\{(i,j)\in\{0..N\}^2 : i=0 \vee j=0\}$, em número $2N+1$
+    - finais: $\mathcal{F}=\{(i,j)\in\{0..N+1\}^2 : i=N+1 \vee j=N+1\}$, em número $2N+3$ (não há células iniciais e finais em comum)
 
     **Regra B3|S23.** Seja $V(i,j)$ o conjunto das 8 vizinhas de $(i,j)$ e $n(i,j)=\sum_{(u,v)\in V(i,j)} [c_{u,v}]$ o número de vizinhas vivas:
 
@@ -45,7 +48,7 @@ def _():
 
     $$T_{\mathit{async}}\;\equiv\;\mathit{Fr}\;\wedge\;\bigvee_{(a,b)\in\mathcal{N}}\Big(\underbrace{c'_{a,b}\leftrightarrow R(a,b)}_{\text{Atualização}}\;\wedge\;\underbrace{\bigwedge_{(i,j)\in\mathcal{N}\setminus\{(a,b)\}}\big(c'_{i,j}\leftrightarrow c_{i,j}\big)}_{\text{Manutenção}}\Big)$$
 
-    A estrutura de cada caso (pré-condição, atualização, manutenção) é a do exercício 2 da ficha 7. A pré-condição é vazia: a célula escolhida pode ficar com o mesmo valor (*stuttering*), o que mantém a relação total (sem deadlocks). A variante estrita acrescentaria a cada disjunto a pré-condição $R(a,b)\not\leftrightarrow c_{a,b}$.
+    A estrutura de cada caso (pré-condição, atualização, manutenção) é a do exercício 2 da ficha 7. A pré-condição é vazia: a célula escolhida pode ficar com o mesmo valor (*stuttering*). É o comportamento que o enunciado descreve, porque a regra B3|S23 inclui como resultados possíveis "mantém-se viva" e "continua morta"; escolher uma célula cuja regra dá o valor atual é, por isso, uma transição válida. Isto mantém ainda a relação total (sem deadlocks). A variante estrita acrescentaria a cada disjunto a pré-condição $R(a,b)\not\leftrightarrow c_{a,b}$.
     """)
     return
 
@@ -133,7 +136,6 @@ def trans_sync(curr, prox, N):
     )
 
 
-# estrutura Pré / Atualização / Manutenção do trans da ficha 7, exercício 2
 @app.function
 def trans_async(curr, prox, N):
     cel = normais(N)
@@ -146,7 +148,7 @@ def trans_async(curr, prox, N):
 
 
 @app.function
-def trans(curr, prox, N, modo="sync"):
+def trans(curr, prox, N, modo=MODO):
     if modo == "sync":
         return trans_sync(curr, prox, N)
     if modo == "async":
@@ -187,9 +189,8 @@ def grelha_modelo(model, state):
     ]
 
 
-# ficha 7, exercícios 1 e 2 (declare, init, trans) agrupados para um dado N, modo e semente
 @app.function
-def fots(N, modo="sync", seed=0):
+def fots(N, modo=MODO, seed=0):
     def declare_(i):
         return declare(i, N)
 
@@ -202,7 +203,6 @@ def fots(N, modo="sync", seed=0):
     return declare_, init_, trans_
 
 
-# ficha 7, exercício 3: gera_traco (k estados, ou seja, k-1 passos)
 @app.function
 def gera_traco(declare, init, trans, k, verbose=True):
     with Solver(name="z3") as s:
@@ -287,8 +287,6 @@ def sem_erro(N):
     return lambda state: Not(erro(state, N))
 
 
-# ficha 7, exercício 4: bmc_always, mas com um só solver incremental (push/pop)
-# em vez de um solver novo por k; devolve o contra-exemplo (ou None) em vez de imprimir
 @app.function
 def bmc_always(declare, init, trans, inv, K):
     with Solver(name="z3") as s:
@@ -335,26 +333,31 @@ def estado_inicial_py(N, seed=0):
 
 
 @app.function
-def orbita_sync(N, seed=0, limite=1_000_000):
+def trajetoria_sync(N, seed=0, limite=1_000_000):
     g = estado_inicial_py(N, seed)
     visto = {tuple(map(tuple, g)): 0}
-    t = 0
-    com_erro = all(g[i][j] == 0 for (i, j) in normais(N))
-    while t < limite:
+    estados = [g]
+    while len(estados) < limite:
         g = passo_sync_py(g, N)
-        t += 1
-        if all(g[i][j] == 0 for (i, j) in normais(N)):
-            com_erro = True
         chave = tuple(map(tuple, g))
         if chave in visto:
-            return {
-                "pre-período": visto[chave],
-                "período": t - visto[chave],
-                "estados distintos": t,
-                "erro na órbita": com_erro,
-            }
-        visto[chave] = t
-    return None
+            return visto[chave], estados
+        visto[chave] = len(estados)
+        estados.append(g)
+    return None, None
+
+
+@app.function
+def orbita_sync(N, seed=0):
+    inicio, estados = trajetoria_sync(N, seed)
+    return {
+        "pre-período": inicio,
+        "período": len(estados) - inicio,
+        "estados distintos": len(estados),
+        "erro na órbita": any(
+            all(g[i][j] == 0 for (i, j) in normais(N)) for g in estados
+        ),
+    }
 
 
 @app.function
@@ -368,19 +371,9 @@ def mudancas(traco, N):
 
 
 @app.function
-def ciclo_sync(N, seed=0, limite=1_000_000):
-    g = estado_inicial_py(N, seed)
-    visto = {tuple(map(tuple, g)): 0}
-    estados = [g]
-    while len(estados) < limite:
-        g = passo_sync_py(g, N)
-        chave = tuple(map(tuple, g))
-        if chave in visto:
-            inicio = visto[chave]
-            return inicio, estados[inicio:]
-        visto[chave] = len(estados)
-        estados.append(g)
-    return None, None
+def ciclo_sync(N, seed=0):
+    inicio, estados = trajetoria_sync(N, seed)
+    return inicio, estados[inicio:]
 
 
 @app.function
@@ -400,9 +393,6 @@ def alguma_constante(N):
     ])
 
 
-# ficha 7, exercícios 6 e 7: bmc_eventually adaptado a G F. O ciclo pode ser uma
-# auto-transição do último estado (j até k-1) e a condição só se impõe aos estados
-# do ciclo; o início do ciclo obtém-se com get_py_value, como no exercício 7
 @app.function
 def bmc_gf(declare, init, trans, constante, bound):
     for k in range(1, bound + 1):
@@ -633,10 +623,20 @@ def prop2_async_com_fairness(N):
     ])
 
 
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ## Geração de traços
+
+    Mostra um traço de 5 passos para $N=17$ (semente 0), gerado com `gera_traco(..., 6)`: tal como na ficha, o último argumento é o número de estados, ou seja, $k-1$ passos. O modo de transição começa com o valor de `MODO` e pode trocar-se aqui. Em cada estado, a linha de cima e a coluna da esquerda são as células iniciais (constantes), a linha de baixo e a coluna da direita são as finais (sempre mortas), e o bloco do meio são as $N\times N$ células normais.
+    """)
+    return
+
+
 @app.cell
 def _():
     modo = mo.ui.dropdown(
-        options=["sync", "async"], value="sync", label="Modo de transição"
+        options=["sync", "async"], value=MODO, label="Modo de transição"
     )
     modo
     return (modo,)
@@ -731,7 +731,7 @@ def _():
 
     $$\bigwedge_{c\in\mathcal{N}}\ G\,F\,c\ \wedge\ G\,F\,\neg c$$
 
-    É uma propriedade de animação (*liveness*), e a sua negação diz que existe uma célula que, a partir de certo ponto, é constante.
+    É uma propriedade de animação (*liveness*), e a sua negação diz que existe uma célula que, a partir de certo ponto, é constante. Numa leitura mais fraca (a célula está morta, ou viva, em **todos** os instantes, desde o início) a propriedade também falha no modo síncrono: com a semente 0 há 71 células que nunca estão vivas em nenhum dos 157 estados da execução, e nas sementes 0 a 9 há sempre pelo menos uma.
 
     **Como é um contra-exemplo.** Como o espaço de estados é finito, toda a execução infinita acaba num ciclo. Um contra-exemplo é um *lasso*: um prefixo $s_0,\dots,s_{j-1}$ seguido de um ciclo $s_j,\dots,s_{k-1}$ (com transição de $s_{k-1}$ para $s_j$) em que alguma célula normal tem o mesmo valor em todos os estados do ciclo.
 
