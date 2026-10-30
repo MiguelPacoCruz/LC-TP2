@@ -63,15 +63,69 @@ def _():
         #entradas a e b nunca mudam
         keep_a_b = And(prox['a'] == curr['a'], prox['b'] == curr['b'])
 
-        # 0. INIT para SKIP (Mantém os valores porque o init já os carregou)
+        # 0. INIT para SKIP 
         t_init = And(curr['pc'] == INIT, prox['pc'] == SKIP,
                      prox['x'] == curr['x'], prox['y'] == curr['y'], prox['z'] == curr['z'])
+
         
+        # 1. SKIP para LEFT, RIGHT ou STOP
+
         # Na representação binária de números, qualquer valor 
         # cujo último bit seja 0 é obrigatoriamente um número par (1 para impar)
         is_even = Extract(0,0,'y') == 0
         
-        return keep_a_b, t_init, is_even
+                          # Pre-condiçao
+        t_skip_stop = And(curr['pc'] == SKIP, curr['y'] == 0, 
+                          # Atualização
+                          prox['pc'] == STOP, 
+                          #Manutenção
+                          prox['x'] == curr['x'], prox['y'] == curr['y'], prox['z'] == curr['z']
+                          )
+
+        t_skip_left = And(curr['pc'] == SKIP, curr['y']!=0, is_even,
+                          prox['pc'] == LEFT,
+                          prox['x'] == curr['x'], prox['y'] == curr['y'], prox['z'] == curr['z']
+                          )
+        t_skip_right = And(curr['pc'] == SKIP, curr['y']!=0, Not(is_even), 
+                           prox['pc'] == RIGHT,
+                           prox['x'] == curr['x'], prox['y'] == curr['y'], prox['z'] == curr['z']
+                           )
+       
+        # 2. Transições do LEFT
+        
+        # compara dois vetores de bits, se o primeiro é menor que o segundo,
+        # caso se verifique é pq passou o tamanho do vetor 
+        of_left = ULT(curr['x']<<1, curr['x'])
+
+        t_left_err = And(curr['pc'] == LEFT, of_left,
+                         prox['pc'] == ERROR,
+                         prox['x'] == curr['x'], prox['y'] == curr['y'], prox['z'] == curr['z']
+                         )
+        t_left_ok = And(curr['pc']==LEFT, Not(of_left),
+                        prox['pc'] == SKIP,
+                        prox['x'] == curr['x'] << 1, prox['y'] == LShR(curr['y'], 1), prox['z'] == curr['z']
+                        )
+
+        # 3. Transições do RIGHT
+        of_right = ULT(curr['z'] + curr['x'], curr['z'])
+
+        t_right_err = And(curr['pc'] == RIGHT, of_right,
+                         prox['pc'] == ERROR,
+                         prox['x'] == curr['x'], prox['y'] == curr['y'], prox['z'] == curr['z']
+                         )
+
+        t_right_ok = And(curr['pc']==RIGHT, Not(of_right),
+                        prox['pc'] == SKIP,
+                        prox['x'] == curr['x'], prox['y'] == curr['y'] - 1, prox['z'] == curr['z'] + curr['x'] # Corrigido y = y - 1 para condizer com o habitual
+                        )
+        #Para garantir continuidade 
+        t_stop = And(curr['pc'] == STOP, prox['pc'] == STOP,
+                     prox['x'] == curr['x'], prox['y'] == curr['y'], prox['z'] == curr['z'])
+        t_err = And(curr['pc'] == ERROR, prox['pc'] == ERROR,
+                    prox['x'] == curr['x'], prox['y'] == curr['y'], prox['z'] == curr['z'])
+
+        return And(keep_a_b, Or(t_init, t_skip_stop, t_skip_left, t_skip_right, 
+                               t_left_err, t_left_ok, t_right_err, t_right_ok, t_stop, t_err))
 
     return ERROR, INIT, LEFT, RIGHT, SKIP, STOP, declare, init, n, trans
 
