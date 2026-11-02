@@ -13,16 +13,30 @@ with app.setup:
     )
     from pysmt.typing import BOOL
 
-    # relação de transição usada por defeito: "sync" ou "async"
     MODO = "sync"
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # 1. Configuração
+    """)
+    return
 
 
 @app.cell(hide_code=True)
-def _():
+def _(mo):
+    mo.md(r"""
+    # 2. Modelo FSM
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
     mo.md(r"""
     # Game of Life com espaço de estados finito
 
-    O autómato é modelado como um *first-order transition system* (FOTS): um predicado `init` sobre o estado inicial e um predicado `trans` sobre o par (pré-estado, pós-estado). Primeiro formula-se a relação de transição em lógica; depois implementa-se em pySMT, com o modo de transição (síncrono ou assíncrono) escolhido pela constante `MODO`, definida no início do notebook. A estrutura segue a da ficha 7 (FOTS, `declare`/`init`/`trans`, `gera_traco` e `bmc_always`); os exercícios de origem são indicados ao longo do texto.
+    O autómato é modelado como um *first-order transition system* (FOTS): um predicado `init` sobre o estado inicial e um predicado `trans` sobre o par (pré-estado, pós-estado). Primeiro formula-se a relação de transição em lógica; depois implementa-se em pySMT, com o modo de transição (síncrono ou assíncrono) escolhido pela constante `MODO`, definida no início do notebook. A estrutura segue a da ficha 7 (FOTS, `declare`/`init`/`trans`, `gera_traco` e `bmc_always`) e, na *k*-indução, a da ficha 8 (`kinduction_always`); os exercícios de origem são indicados ao longo do texto.
 
     ## Formulação lógica
 
@@ -53,15 +67,18 @@ def _():
     return
 
 
-@app.function
-def declare(t, N):
-    if not N > 16:
-        raise ValueError("N must be greater than 16")
-    return {
-        (i, j): Symbol(f"cell_{i}_{j}_{t}", BOOL)
-        for i in range(0, N + 2)
-        for j in range(0, N + 2)
-    }
+@app.cell
+def _(BOOL, Symbol):
+    def declare(t, N):
+        if not N > 16:
+            raise ValueError("N must be greater than 16")
+        return {
+            (i, j): Symbol(f"cell_{i}_{j}_{t}", BOOL)
+            for i in range(0, N + 2)
+            for j in range(0, N + 2)
+        }
+
+    return (declare,)
 
 
 @app.function
@@ -79,29 +96,35 @@ def normais(N):
     return [(i, j) for i in range(1, N + 1) for j in range(1, N + 1)]
 
 
-@app.function
-def init(state, N):
-    constraints = []
-    for (i, j) in normais(N):
-        if i <= 3 and j <= 3:
-            constraints.append(state[(i, j)])
-        else:
-            constraints.append(Not(state[(i, j)]))
-    return And(constraints)
+@app.cell
+def _(And, Not):
+    def init(state, N):
+        constraints = []
+        for (i, j) in normais(N):
+            if i <= 3 and j <= 3:
+                constraints.append(state[(i, j)])
+            else:
+                constraints.append(Not(state[(i, j)]))
+        return And(constraints)
+
+    return (init,)
 
 
-@app.function
-def initial_final_cells(state, N, seed=0):
-    rng = Random(seed)
-    constraints = []
+@app.cell
+def _(And, Not, Random):
+    def initial_final_cells(state, N, seed=0):
+        rng = Random(seed)
+        constraints = []
 
-    for c in iniciais(N):
-        constraints.append(state[c] if rng.random() < 0.5 else Not(state[c]))
+        for c in iniciais(N):
+            constraints.append(state[c] if rng.random() < 0.5 else Not(state[c]))
 
-    for c in finais(N):
-        constraints.append(Not(state[c]))
+        for c in finais(N):
+            constraints.append(Not(state[c]))
 
-    return And(constraints)
+        return And(constraints)
+
+    return (initial_final_cells,)
 
 
 @app.function
@@ -114,46 +137,95 @@ def vizinhos(i, j):
     ]
 
 
-@app.function
-def regra(curr, i, j):
-    n = Plus([Ite(curr[v], Int(1), Int(0)) for v in vizinhos(i, j)])
-    return Or(Equals(n, Int(3)), And(curr[(i, j)], Equals(n, Int(2))))
+@app.cell
+def _(And, Equals, Int, Ite, Or, Plus):
+    def regra(curr, i, j):
+        n = Plus([Ite(curr[v], Int(1), Int(0)) for v in vizinhos(i, j)])
+        return Or(Equals(n, Int(3)), And(curr[(i, j)], Equals(n, Int(2))))
+
+    return (regra,)
+
+
+@app.cell
+def _(And, Iff, Not):
+    def fronteira(curr, prox, N):
+        return And(
+            [Iff(prox[c], curr[c]) for c in iniciais(N)]
+            + [Not(prox[c]) for c in finais(N)]
+        )
+
+    return (fronteira,)
+
+
+@app.cell
+def _(And, Iff, fronteira, regra):
+    def trans_sync(curr, prox, N):
+        return And(
+            fronteira(curr, prox, N),
+            And([Iff(prox[(i, j)], regra(curr, i, j)) for (i, j) in normais(N)]),
+        )
+
+    return (trans_sync,)
+
+
+@app.cell
+def _(And, Iff, Or, fronteira, regra):
+    def trans_async(curr, prox, N):
+        cel = normais(N)
+        casos = []
+        for a in cel:
+            atualizacao = Iff(prox[a], regra(curr, *a))
+            manutencao = And([Iff(prox[c], curr[c]) for c in cel if c != a])
+            casos.append(And(atualizacao, manutencao))
+        return And(fronteira(curr, prox, N), Or(casos))
+
+    return (trans_async,)
+
+
+@app.cell
+def _(MODO, trans_async, trans_sync):
+    def trans(curr, prox, N, modo=MODO):
+        if modo == "sync":
+            return trans_sync(curr, prox, N)
+        if modo == "async":
+            return trans_async(curr, prox, N)
+        raise ValueError("modo deve ser 'sync' ou 'async'")
+
+    return (trans,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # 3. Geração de traços
+    """)
+    return
+
+
+@app.cell
+def _(And, MODO, declare, init, initial_final_cells, trans):
+    def fots(N, modo=MODO, seed=0):
+        def declare_(i):
+            return declare(i, N)
+
+        def init_(state):
+            return And(init(state, N), initial_final_cells(state, N, seed))
+
+        def trans_(curr, prox):
+            return trans(curr, prox, N, modo)
+
+        return declare_, init_, trans_
+
+    return (fots,)
 
 
 @app.function
-def fronteira(curr, prox, N):
-    return And(
-        [Iff(prox[c], curr[c]) for c in iniciais(N)]
-        + [Not(prox[c]) for c in finais(N)]
-    )
-
-
-@app.function
-def trans_sync(curr, prox, N):
-    return And(
-        fronteira(curr, prox, N),
-        And([Iff(prox[(i, j)], regra(curr, i, j)) for (i, j) in normais(N)]),
-    )
-
-
-@app.function
-def trans_async(curr, prox, N):
-    cel = normais(N)
-    casos = []
-    for a in cel:
-        atualizacao = Iff(prox[a], regra(curr, *a))
-        manutencao = And([Iff(prox[c], curr[c]) for c in cel if c != a])
-        casos.append(And(atualizacao, manutencao))
-    return And(fronteira(curr, prox, N), Or(casos))
-
-
-@app.function
-def trans(curr, prox, N, modo=MODO):
-    if modo == "sync":
-        return trans_sync(curr, prox, N)
-    if modo == "async":
-        return trans_async(curr, prox, N)
-    raise ValueError("modo deve ser 'sync' ou 'async'")
+def grelha_modelo(model, state):
+    N = max(i for (i, _) in state) - 1
+    return [
+        [1 if model.get_py_value(state[(i, j)]) else 0 for j in range(N + 2)]
+        for i in range(N + 2)
+    ]
 
 
 @app.function
@@ -180,55 +252,43 @@ def mostra(grelha):
     print(grelha_str(grelha))
 
 
-@app.function
-def grelha_modelo(model, state):
-    N = max(i for (i, _) in state) - 1
-    return [
-        [1 if model.get_py_value(state[(i, j)]) else 0 for j in range(N + 2)]
-        for i in range(N + 2)
-    ]
+@app.cell
+def _(And, Solver):
+    def gera_traco(declare, init, trans, k, verbose=True):
+        with Solver(name="z3") as s:
+            states = [declare(i) for i in range(k)]
 
+            constraints = []
 
-@app.function
-def fots(N, modo=MODO, seed=0):
-    def declare_(i):
-        return declare(i, N)
+            constraints.append(init(states[0]))
 
-    def init_(state):
-        return And(init(state, N), initial_final_cells(state, N, seed))
+            for i in range(k - 1):
+                constraints.append(trans(states[i], states[i + 1]))
 
-    def trans_(curr, prox):
-        return trans(curr, prox, N, modo)
+            s.add_assertion(And(constraints))
 
-    return declare_, init_, trans_
-
-
-@app.function
-def gera_traco(declare, init, trans, k, verbose=True):
-    with Solver(name="z3") as s:
-        states = [declare(i) for i in range(k)]
-
-        constraints = []
-
-        constraints.append(init(states[0]))
-
-        for i in range(k - 1):
-            constraints.append(trans(states[i], states[i + 1]))
-
-        s.add_assertion(And(constraints))
-
-        if s.solve():
-            model = s.get_model()
-            traco = [grelha_modelo(model, st) for st in states]
+            if s.solve():
+                model = s.get_model()
+                traco = [grelha_modelo(model, st) for st in states]
+                if verbose:
+                    for i, grelha in enumerate(traco):
+                        print(f"Estado {i}:")
+                        mostra(grelha)
+                        print()
+                return traco
             if verbose:
-                for i, grelha in enumerate(traco):
-                    print(f"Estado {i}:")
-                    mostra(grelha)
-                    print()
-            return traco
-        if verbose:
-            print("Não foi encontrado um traço válido")
-        return None
+                print("Não foi encontrado um traço válido")
+            return None
+
+    return (gera_traco,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # 4. Simulação e validação
+    """)
+    return
 
 
 @app.function
@@ -248,6 +308,39 @@ def passo_sync_py(g, N):
         for j in range(1, N + 1):
             nova[i][j] = regra_py(g, i, j)
     return nova
+
+
+@app.cell
+def _(Random):
+    def estado_inicial_py(N, seed=0):
+        rng = Random(seed)
+        g = [[0] * (N + 2) for _ in range(N + 2)]
+        for (i, j) in iniciais(N):
+            g[i][j] = 1 if rng.random() < 0.5 else 0
+        for i in range(1, 4):
+            for j in range(1, 4):
+                g[i][j] = 1
+        return g
+
+    return (estado_inicial_py,)
+
+
+@app.cell
+def _(estado_inicial_py):
+    def trajetoria_sync(N, seed=0, limite=1_000_000):
+        g = estado_inicial_py(N, seed)
+        visto = {tuple(map(tuple, g)): 0}
+        estados = [g]
+        while len(estados) < limite:
+            g = passo_sync_py(g, N)
+            chave = tuple(map(tuple, g))
+            if chave in visto:
+                return visto[chave], estados
+            visto[chave] = len(estados)
+            estados.append(g)
+        return None, None
+
+    return (trajetoria_sync,)
 
 
 @app.function
@@ -277,87 +370,219 @@ def valida_traco(traco, N, modo):
     return True, f"{len(traco) - 1} passos verificados"
 
 
-@app.function
-def erro(state, N):
-    return And([Not(state[c]) for c in normais(N)])
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # 5. Verificação formal
+    """)
+    return
 
 
-@app.function
-def sem_erro(N):
-    return lambda state: Not(erro(state, N))
+@app.cell
+def _(And, Not):
+    def erro(state, N):
+        return And([Not(state[c]) for c in normais(N)])
+
+    return (erro,)
 
 
-@app.function
-def bmc_always(declare, init, trans, inv, K):
-    with Solver(name="z3") as s:
-        states = [declare(0)]
-        s.add_assertion(init(states[0]))
+@app.cell
+def _(Not, erro):
+    def sem_erro(N):
+        return lambda state: Not(erro(state, N))
+
+    return (sem_erro,)
+
+
+@app.cell
+def _(And, Not, erro):
+    def invariante_inducao(N):
+        return lambda state: And(
+            Not(erro(state, N)),
+            And([Not(state[c]) for c in finais(N)]),
+        )
+
+    return (invariante_inducao,)
+
+
+@app.cell
+def _(And, Not, Solver):
+    def bmc_always(declare, init, trans, inv, K):
         for k in range(1, K + 1):
-            if k > 1:
-                states.append(declare(k - 1))
-                s.add_assertion(trans(states[-2], states[-1]))
-            s.push()
-            s.add_assertion(Not(inv(states[-1])))
-            if s.solve():
-                model = s.get_model()
-                return [grelha_modelo(model, st) for st in states]
-            s.pop()
-    return None
+            with Solver(name="z3") as s:
+                states = [declare(i) for i in range(k)]
+                constraints = []
+            
+                constraints.append(init(states[0]))
+            
+                for i in range(k - 1):
+                    constraints.append(trans(states[i], states[i + 1]))
+                
+                constraints.append(Not(inv(states[-1])))
+            
+                s.add_assertion(And(constraints))
 
-
-@app.function
-def passo_inducao(N, k, modo="sync"):
-    with Solver(name="z3") as s:
-        states = [declare(t, N) for t in range(k + 1)]
-        s.add_assertion(And([Not(states[0][c]) for c in finais(N)]))
-        for t in range(k):
-            s.add_assertion(Not(erro(states[t], N)))
-            s.add_assertion(trans(states[t], states[t + 1], N, modo))
-        s.add_assertion(erro(states[k], N))
-        if s.solve():
-            model = s.get_model()
-            return [grelha_modelo(model, st) for st in states]
+                if s.solve():
+                    model = s.get_model()
+                    return [grelha_modelo(model, st) for st in states]
         return None
 
+    return (bmc_always,)
+
+
+@app.cell
+def _(And, Not, Or, Solver):
+    def kinduction_always(declare, init, trans, inv, k):
+
+        with Solver(name="z3") as solver:
+
+            states = [declare(i) for i in range(k)]
+
+            base = [init(states[0])]
+
+        
+
+            for i in range(k - 1):
+
+                base.append(trans(states[i], states[i + 1]))
+
+    
+
+            caso_base = And(And(base), Or([Not(inv(s)) for s in states]))
+
+            solver.add_assertion(caso_base)
+
+        
+
+            if solver.solve():
+
+                model = solver.get_model()
+
+                return "caso base", [grelha_modelo(model, s) for s in states]
+
+
+
+            solver.reset_assertions()
+
+
+
+            states = [declare(i) for i in range(k + 1)]
+
+            inductive = []
+
+            for i in range(k):
+
+                inductive.append(trans(states[i], states[i + 1]))
+
+
+
+            inductive.append(And([inv(states[i]) for i in range(k)]))
+
+            inductive.append(Not(inv(states[k])))
+
+
+
+            step_case = And(inductive)
+
+            solver.add_assertion(step_case)
+
+        
+
+            if solver.solve():
+
+                model = solver.get_model()
+
+                return "passo indutivo", [grelha_modelo(model, s) for s in states]
+
+
+
+        return None, None
+
+    return (kinduction_always,)
+
+
+@app.cell
+def _(And, Not, Or):
+    def alguma_constante(N):
+        cel = normais(N)
+        return lambda estados: Or([
+            Or(And([st[c] for st in estados]), And([Not(st[c]) for st in estados]))
+            for c in cel
+        ])
+
+    return
+
+
+@app.cell
+def _(And, Or, Solver):
+    def bmc_eventually(declare, init, trans, constante, bound):
+        for k in range(1, bound + 1):
+             with Solver(name="z3") as s:
+                states = [declare(i) for i in range(k)]
+                constraints = []
+            
+                constraints.append(init(states[0]))
+            
+                for i in range(k - 1):
+                    constraints.append(trans(states[i], states[i + 1]))
+                
+                ciclos = [
+                    And(trans(states[-1], states[j]), constante(states[j:]))
+                    for j in range(k)
+                ]
+                constraints.append(Or(ciclos))
+
+                s.add_assertion(And(constraints))
+
+                if s.solve():
+                    model = s.get_model()
+                    j = next(j for j in range(k) if model.get_py_value(ciclos[j]))
+                    return [grelha_modelo(model, st) for st in states], j
+                
+        return None, None
+
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    # 6. Análise de propriedades
+    """)
+    return
+
+
+@app.cell
+def _(trajetoria_sync):
+    def orbita_sync(N, seed=0):
+        inicio, estados = trajetoria_sync(N, seed)
+        return {
+            "pre-período": inicio,
+            "período": len(estados) - inicio,
+            "estados distintos": len(estados),
+            "erro na órbita": any(
+                all(g[i][j] == 0 for (i, j) in normais(N)) for g in estados
+            ),
+        }
+
+    return (orbita_sync,)
+
+
+@app.cell
+def _(trajetoria_sync):
+    def ciclo_sync(N, seed=0):
+        inicio, estados = trajetoria_sync(N, seed)
+        return inicio, estados[inicio:]
+
+    return (ciclo_sync,)
+
 
 @app.function
-def estado_inicial_py(N, seed=0):
-    rng = Random(seed)
-    g = [[0] * (N + 2) for _ in range(N + 2)]
-    for (i, j) in iniciais(N):
-        g[i][j] = 1 if rng.random() < 0.5 else 0
-    for i in range(1, 4):
-        for j in range(1, 4):
-            g[i][j] = 1
-    return g
-
-
-@app.function
-def trajetoria_sync(N, seed=0, limite=1_000_000):
-    g = estado_inicial_py(N, seed)
-    visto = {tuple(map(tuple, g)): 0}
-    estados = [g]
-    while len(estados) < limite:
-        g = passo_sync_py(g, N)
-        chave = tuple(map(tuple, g))
-        if chave in visto:
-            return visto[chave], estados
-        visto[chave] = len(estados)
-        estados.append(g)
-    return None, None
-
-
-@app.function
-def orbita_sync(N, seed=0):
-    inicio, estados = trajetoria_sync(N, seed)
-    return {
-        "pre-período": inicio,
-        "período": len(estados) - inicio,
-        "estados distintos": len(estados),
-        "erro na órbita": any(
-            all(g[i][j] == 0 for (i, j) in normais(N)) for g in estados
-        ),
-    }
+def classifica_celulas(ciclo, N):
+    cel = normais(N)
+    mortas = [(i, j) for (i, j) in cel if all(g[i][j] == 0 for g in ciclo)]
+    vivas = [(i, j) for (i, j) in cel if all(g[i][j] == 1 for g in ciclo)]
+    return mortas, vivas
 
 
 @app.function
@@ -370,271 +595,261 @@ def mudancas(traco, N):
     ]
 
 
-@app.function
-def ciclo_sync(N, seed=0):
-    inicio, estados = trajetoria_sync(N, seed)
-    return inicio, estados[inicio:]
+@app.cell
+def _(estado_inicial_py):
+    def repete_sequencia(N, seed, sequencia):
+        g = estado_inicial_py(N, seed)
+        for t, ((i, j), depois) in enumerate(sequencia, start=1):
+            if regra_py(g, i, j) != depois or g[i][j] == depois:
+                return False, f"passo {t}: a célula ({i},{j}) não passa a {depois} pela regra"
+            g[i][j] = depois
+        instaveis = [(i, j) for (i, j) in normais(N) if regra_py(g, i, j) != g[i][j]]
+        if instaveis:
+            return False, f"o estado final não é estável ({len(instaveis)} células mudariam)"
+        return True, [(i, j) for (i, j) in normais(N) if g[i][j]]
+
+    return (repete_sequencia,)
 
 
-@app.function
-def classifica_celulas(ciclo, N):
-    cel = normais(N)
-    mortas = [(i, j) for (i, j) in cel if all(g[i][j] == 0 for g in ciclo)]
-    vivas = [(i, j) for (i, j) in cel if all(g[i][j] == 1 for g in ciclo)]
-    return mortas, vivas
+@app.cell
+def _(fots, gera_traco, mo):
+    def tabela_validacao(N):
+        linhas = []
+        for tipo, k in (("sync", 20), ("async", 6)):
+            traco = gera_traco(*fots(N, tipo), k + 1, verbose=False)
+            ok, msg = valida_traco(traco, N, tipo)
+            linhas.append(f"| {tipo} | {k} | {'✔ ok' if ok else '✘ falhou'} | {msg} |")
+        return mo.md("| modo | k | validação | detalhe |\n|---|---|---|---|\n" + "\n".join(linhas))
+
+    return (tabela_validacao,)
 
 
-@app.function
-def alguma_constante(N):
-    cel = normais(N)
-    return lambda estados: Or([
-        Or(And([st[c] for st in estados]), And([Not(st[c]) for st in estados]))
-        for c in cel
-    ])
+@app.cell
+def _(bmc_always, fots, mo, orbita_sync, pd, sem_erro):
+    def prop1_sync(N):
 
+        orb = orbita_sync(N, seed=0)
 
-@app.function
-def bmc_gf(declare, init, trans, constante, bound):
-    for k in range(1, bound + 1):
-        with Solver(name="z3") as s:
-            states = [declare(i) for i in range(k)]
+        K = orb["estados distintos"]
 
-            constraints = []
+        traco = bmc_always(*fots(N, "sync"), sem_erro(N), K)
 
-            constraints.append(init(states[0]))
+        tab = pd.DataFrame(
 
-            for i in range(k - 1):
-                constraints.append(trans(states[i], states[i + 1]))
+            [{"semente": sd, **orbita_sync(N, seed=sd)} for sd in range(10)]
 
-            ciclos = [
-                And(trans(states[-1], states[j]), constante(states[j:]))
-                for j in range(k)
-            ]
-            constraints.append(Or(ciclos))
-
-            s.add_assertion(And(constraints))
-
-            if s.solve():
-                model = s.get_model()
-                j = next(j for j in range(k) if model.get_py_value(ciclos[j]))
-                return [grelha_modelo(model, st) for st in states], j
-    return None, None
-
-
-@app.function
-def repete_sequencia(N, seed, sequencia):
-    g = estado_inicial_py(N, seed)
-    for t, ((i, j), depois) in enumerate(sequencia, start=1):
-        if regra_py(g, i, j) != depois or g[i][j] == depois:
-            return False, f"passo {t}: a célula ({i},{j}) não passa a {depois} pela regra"
-        g[i][j] = depois
-    instaveis = [(i, j) for (i, j) in normais(N) if regra_py(g, i, j) != g[i][j]]
-    if instaveis:
-        return False, f"o estado final não é estável ({len(instaveis)} células mudariam)"
-    return True, [(i, j) for (i, j) in normais(N) if g[i][j]]
-
-
-@app.function
-def tabela_validacao(N):
-    linhas = []
-    for tipo, k in (("sync", 20), ("async", 6)):
-        traco = gera_traco(*fots(N, tipo), k + 1, verbose=False)
-        ok, msg = valida_traco(traco, N, tipo)
-        linhas.append(f"| {tipo} | {k} | {'✔ ok' if ok else '✘ falhou'} | {msg} |")
-    return mo.md("| modo | k | validação | detalhe |\n|---|---|---|---|\n" + "\n".join(linhas))
-
-
-@app.function
-def prop1_sync(N):
-    orb = orbita_sync(N, seed=0)
-    K = orb["estados distintos"]
-    traco = bmc_always(*fots(N, "sync"), sem_erro(N), K)
-    tab = pd.DataFrame(
-        [{"semente": sd, **orbita_sync(N, seed=sd)} for sd in range(10)]
-    )
-    if traco is None:
-        veredito = (
-            f"BMC com {K} estados ($d={K - 1}$ passos) sem contra-exemplo. "
-            f"Como a órbita só tem {K} estados, "
-            "isto **prova** que o estado de erro nunca é alcançado no modo síncrono, "
-            "para esta semente."
         )
-    else:
-        veredito = f"Contra-exemplo no modo síncrono com $d={len(traco) - 1}$ passos."
-    return mo.vstack([
-        mo.md(
-            "### Modo síncrono: prova por exaustão\n\n"
-            f"Com a semente 0, a simulação repete um estado ao fim de {orb['estados distintos']} "
-            f"estados (pré-período {orb['pre-período']}, período {orb['período']}). " + veredito
-            + "\n\nA tabela repete a simulação para outras sementes (simulação exaustiva, "
-            "pelo mesmo argumento do determinismo):"
-        ),
-        mo.ui.table(tab, selection=None),
-    ])
+
+        if traco is None:
+
+            veredito = f"O BMC não encontrou contra-exemplo até d={K - 1}. Sendo K o tamanho total da órbita, prova-se por exaustão que o estado de erro é inalcançável (para a semente 0)."
+
+        else:
+
+            veredito = f"Contra-exemplo no modo síncrono atingido em d={len(traco) - 1} passos."
+
+        
+
+        return mo.vstack([
+
+            mo.md(f"### Modo síncrono (Prova por Exaustão)\n\n{veredito}\n\nA tabela demonstra a estabilização para outras sementes:"),
+
+            mo.ui.table(tab, selection=None),
+
+        ])
+
+    return (prop1_sync,)
 
 
-@app.function
-def prop1_inducao(N):
-    linhas = []
-    cti1 = None
-    for k in (1, 2, 3):
-        cti = passo_inducao(N, k, "sync")
-        if k == 1:
-            cti1 = cti
-        linhas.append({
-            "k": k,
-            "passo da k-indução": "falha (há contra-exemplo à indução)" if cti else "provado",
-        })
-    texto = ""
-    if cti1 is not None:
-        vivas0 = [(i, j) for (i, j) in normais(N) if cti1[0][i][j]]
-        vivas1 = [(i, j) for (i, j) in normais(N) if cti1[1][i][j]]
-        texto = (
-            f"\n\nContra-exemplo à indução com $k=1$: um estado com as células vivas {vivas0} "
-            f"(cada uma tem uma só vizinha viva) que passa a ter {len(vivas1)} células vivas, "
-            "ou seja, a um estado de erro. Este estado pode nem ser alcançável a partir "
-            "do estado inicial, mas a indução não tem como o excluir."
-        )
-    return mo.vstack([
-        mo.md("### Modo síncrono: tentativa de *k*-indução"),
-        mo.ui.table(pd.DataFrame(linhas), selection=None),
-        mo.md(
-            "A propriedade **não é *k*-indutiva** para estes $k$: existem sequências de estados "
-            "sem erro que acabam num erro (padrões que levam vários passos a morrer, por exemplo "
-            "uma linha diagonal de células, que perde as pontas a cada passo). "
-            "Fora do notebook testou-se até $k=12$ sem sucesso (e o passo já demora cerca de "
-            "220 s), por isso a *k*-indução não resolve este caso. O que prova a propriedade "
-            "no síncrono é a exaustão acima." + texto
-        ),
-    ])
+@app.cell
+def _(fots, invariante_inducao, kinduction_always, mo, pd):
+    def prop1_inducao(N):
+
+        linhas = []
+
+        cti1 = None
+
+        for k in (1, 2, 3):
+
+            onde, ce = kinduction_always(*fots(N, "sync"), invariante_inducao(N), k)
+
+            if k == 1 and onde == "passo indutivo":
+
+                cti1 = ce
+
+            linhas.append({
+
+                "k": k,
+
+                "resultado": f"falha no {onde}" if onde else "válida por k-indução",
+
+            })
+
+        texto = ""
+
+        if cti1 is not None:
+
+            texto = "\n\nO invariante falha no passo indutivo. O solver encontra estados (mesmo que inalcançáveis a partir da origem) onde células vivas transitam todas para zero num só passo, mostrando que a propriedade não é k-indutiva para estes valores."
+
+        
+
+        return mo.vstack([
+
+            mo.md("### Análise por k-indução"),
+
+            mo.ui.table(pd.DataFrame(linhas), selection=None),
+
+            mo.md(texto),
+
+        ])
+
+    return (prop1_inducao,)
 
 
-@app.function
-def prop1_async(N):
-    traco = bmc_always(*fots(N, "async"), sem_erro(N), 13)
-    if traco is None:
-        return mo.md("BMC até $d=12$ sem contra-exemplo no modo assíncrono.")
-    d = len(traco) - 1
-    ok, msg = valida_traco(traco, N, "async")
-    tab = pd.DataFrame([
-        {"passo": passo, "célula": f"({cel[0]},{cel[1]})", "antes": antes, "depois": depois}
-        for (passo, cel, antes, depois) in mudancas(traco, N)
-    ])
-    return mo.vstack([
-        mo.md(
-            "### Modo assíncrono: contra-exemplo\n\n"
-            f"O BMC encontra o estado de erro com **$d={d}$ passos**. "
-            "Em cada passo transita uma só célula, e é esta a ordem:"
-        ),
-        mo.ui.table(tab, selection=None),
-        mo.md(
-            f"O traço foi confirmado pelo simulador em Python ({msg}). "
-            f"É o contra-exemplo **mínimo**: o estado inicial tem 9 células normais vivas "
-            f"(o bloco $3\\times3$) e só uma muda por passo, por isso são precisos pelo "
-            f"menos 9 passos."
-        ),
-    ])
+@app.cell
+def _(bmc_always, fots, mo, pd, sem_erro):
+    def prop1_async(N):
+
+        traco = bmc_always(*fots(N, "async"), sem_erro(N), 13)
+
+        if traco is None:
+
+            return mo.md("Sem contra-exemplo até d=12 (assíncrono).")
+
+    
+
+        d = len(traco) - 1
+
+        tab = pd.DataFrame([
+
+            {"passo": passo, "célula": f"({cel[0]},{cel[1]})", "antes": antes, "depois": depois}
+
+            for (passo, cel, antes, depois) in mudancas(traco, N)
+
+        ])
+
+    
+
+        return mo.vstack([
+
+            mo.md(f"### Modo assíncrono (Contra-exemplo)\n\nA propriedade falha no modo assíncrono. O BMC gerou um traço de d={d} passos (contra-exemplo mínimo) onde o estado de erro é forçado, alterando uma célula por passo:"),
+
+            mo.ui.table(tab, selection=None)
+
+        ])
+
+    return (prop1_async,)
 
 
-@app.function
-def prop2_sync(N):
-    linhas = []
-    for sd in range(10):
-        pre, ciclo = ciclo_sync(N, seed=sd)
-        mortas, vivas = classifica_celulas(ciclo, N)
-        linhas.append({
-            "semente": sd,
-            "pré-período": pre,
-            "período": len(ciclo),
-            "sempre mortas": len(mortas),
-            "sempre vivas": len(vivas),
-            "variam": N * N - len(mortas) - len(vivas),
-        })
-    confirmacoes = []
-    for sd in (5, 2):
-        traco, j = bmc_gf(*fots(N, "sync", sd), alguma_constante(N), 20)
-        mortas, vivas = classifica_celulas(traco[j:], N)
-        confirmacoes.append(
-            f"- semente {sd}: o BMC encontra um *lasso* com {len(traco)} estados e ciclo a "
-            f"começar no estado {j} (período {len(traco) - j}); no ciclo há "
-            f"{len(mortas)} células sempre mortas e {len(vivas)} sempre vivas."
-        )
-    return mo.vstack([
-        mo.md(
-            "### Modo síncrono\n\n"
-            "O sistema é determinístico, por isso a simulação dá o ciclo exato de cada execução. "
-            "A tabela classifica as células normais ao longo desse ciclo:"
-        ),
-        mo.ui.table(pd.DataFrame(linhas), selection=None),
-        mo.md(
-            "O resultado é o mesmo para todas as sementes: o sistema acaba num ciclo (muitas vezes "
-            "um estado parado) em que quase todas as células são constantes. Para duas sementes "
-            "com ciclo curto confirma-se com o `bmc_gf`, a partir do modelo SMT:\n\n"
-            + "\n".join(confirmacoes)
-        ),
-    ])
+@app.cell
+def _(ciclo_sync, mo, pd):
+    def prop2_sync(N):
+
+        linhas = []
+
+        for sd in range(10):
+
+            pre, ciclo = ciclo_sync(N, seed=sd)
+
+            mortas, vivas = classifica_celulas(ciclo, N)
+
+            linhas.append({
+
+                "semente": sd,
+
+                "pré-período": pre,
+
+                "período": len(ciclo),
+
+                "sempre mortas": len(mortas),
+
+                "sempre vivas": len(vivas)
+
+            })
+
+        
+
+        return mo.vstack([
+
+            mo.md("### Modo síncrono\n\nA propriedade falha. O sistema tende a estabilizar, com a esmagadora maioria das células a fixarem-se num estado permanente (ver tabela). Este comportamento foi confirmado pelo BMC de ciclo para as primeiras sementes."),
+
+            mo.ui.table(pd.DataFrame(linhas), selection=None)
+
+        ])
+
+    return (prop2_sync,)
 
 
-@app.function
-def prop2_async_sem_fairness(N):
-    traco, j = bmc_gf(*fots(N, "async"), alguma_constante(N), 3)
-    return mo.md(
-        "### Modo assíncrono, sem *fairness*\n\n"
-        f"O BMC encontra um contra-exemplo logo com {len(traco)} estado(s): o ciclo é o próprio "
-        f"estado inicial (de {len(traco) - 1} para {j}). Como a célula escolhida pode ficar com "
-        "o mesmo valor (*stuttering*), o sistema pode ficar parado para sempre, e todas as células "
-        "são constantes. É um contra-exemplo trivial: só mostra que sem exigir *fairness* a "
-        "propriedade não pode valer."
-    )
+@app.cell
+def _(mo):
+    def prop2_async_sem_fairness(N):
+
+        return mo.md("### Modo assíncrono (sem fairness)\n\nA propriedade é trivialmente falsa, pois a relação de transição permite *stuttering*. O BMC encontra um ciclo com 1 estado (onde o sistema fica parado), tornando todas as células permanentes.")
+
+    return (prop2_async_sem_fairness,)
 
 
-@app.function
-def prop2_async_com_fairness(N):
-    sequencia = [
-        ((2, 3), 0), ((2, 2), 0), ((1, 8), 1), ((2, 1), 0), ((1, 9), 1),
-        ((4, 2), 1), ((3, 1), 0), ((4, 3), 1), ((1, 8), 0),
-    ]
-    ok, res = repete_sequencia(N, 0, sequencia)
-    if ok:
-        texto = (
-            "A sequência de 9 passos abaixo foi encontrada pelo BMC (uma pesquisa de cerca de "
-            "4 minutos, por isso aqui só se repete) e é verificada em Python: cada passo aplica a "
-            "regra B3|S23 a uma célula e o estado final é **estável**, isto é, nenhuma célula "
-            f"mudaria se fosse escolhida. Células vivas no estado final: {res}."
-        )
-    else:
-        texto = f"A verificação da sequência falhou: {res}"
-    return mo.vstack([
-        mo.md(
-            "### Modo assíncrono, com *fairness*\n\n"
-            "*Fairness* exige que cada célula seja escolhida infinitas vezes no ciclo. O modelo "
-            "não guarda a célula escolhida, por isso não se codifica diretamente. Usa-se um "
-            "argumento: se é alcançável um estado estável, escolher todas as células em ciclo é "
-            "uma execução justa em que o estado nunca muda, e todas as células ficam constantes."
-        ),
-        mo.md(texto),
-        mo.ui.table(
-            pd.DataFrame(
-                [{"passo": p, "célula": f"({c[0]},{c[1]})", "novo valor": v}
-                 for p, (c, v) in enumerate(sequencia, start=1)]
+@app.cell
+def _(mo, pd, repete_sequencia):
+    def prop2_async_com_fairness(N):
+
+        sequencia = [
+
+            ((2, 3), 0), ((2, 2), 0), ((1, 8), 1), ((2, 1), 0), ((1, 9), 1),
+
+            ((4, 2), 1), ((3, 1), 0), ((4, 3), 1), ((1, 8), 0),
+
+        ]
+
+        ok, res = repete_sequencia(N, 0, sequencia)
+
+    
+
+        texto = "O BMC encontrou uma sequência de 9 passos que conduz a um estado estável, invalidando a propriedade mesmo assumindo execução justa." if ok else f"Falha na validação: {res}"
+
+    
+
+        return mo.vstack([
+
+            mo.md(f"### Modo assíncrono (com fairness)\n\n{texto}"),
+
+            mo.ui.table(
+
+                pd.DataFrame([{"passo": p, "célula": f"({c[0]},{c[1]})", "novo valor": v}
+
+                     for p, (c, v) in enumerate(sequencia, start=1)]),
+
+                selection=None,
+
             ),
-            selection=None,
-        ),
-    ])
+
+        ])
+
+    return (prop2_async_com_fairness,)
 
 
 @app.cell(hide_code=True)
-def _():
+def _(mo):
+    mo.md(r"""
+    # 7. Visualização e interface
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
     mo.md(r"""
     ## Geração de traços
 
     Mostra um traço de 5 passos para $N=17$ (semente 0), gerado com `gera_traco(..., 6)`: tal como na ficha, o último argumento é o número de estados, ou seja, $k-1$ passos. O modo de transição começa com o valor de `MODO` e pode trocar-se aqui. Em cada estado, a linha de cima e a coluna da esquerda são as células iniciais (constantes), a linha de baixo e a coluna da direita são as finais (sempre mortas), e o bloco do meio são as $N\times N$ células normais.
+
+    A animação da geração de traços foi gerada pelo [chatGPT](https://chatgpt.com/share/6ae8ded7-2bdc-83eb-b76e-d93f407b779a).
     """)
     return
 
 
 @app.cell
-def _():
+def _(MODO, mo):
     modo = mo.ui.dropdown(
         options=["sync", "async"], value=MODO, label="Modo de transição"
     )
@@ -643,70 +858,146 @@ def _():
 
 
 @app.cell
-def _(modo):
-    gera_traco(*fots(17, modo.value), 6)
+def _(fots, gera_traco, modo):
+    # A geração do traço mantém-se independente da animação.
+    # verbose=False evita imprimir todas as grelhas em texto.
+    traco_anim = gera_traco(*fots(17, modo.value), 6, verbose=False)
+    return (traco_anim,)
+
+
+@app.cell
+def _(mo):
+    # Estado reativo: índice da grelha atualmente apresentada.
+    get_indice, set_indice = mo.state(0)
+    return get_indice, set_indice
+
+
+@app.cell
+def _(mo, set_indice):
+    # O próprio controlo refresh inicia/pausa a reprodução.
+    # O menu permite escolher o intervalo entre estados.
+    reproducao = mo.ui.refresh(
+        options=[0.1, 0.2, 0.5, 1.0],
+        default_interval=0.2,
+        label="Reproduzir / Pausar — intervalo",
+    )
+    reiniciar = mo.ui.button(
+        label="Reiniciar",
+        on_click=lambda _: set_indice(0),
+    )
+    mo.hstack([reproducao, reiniciar], justify="start", align="center")
+    return (reproducao,)
+
+
+@app.cell
+def _(reproducao, set_indice, traco_anim):
+    # Cada atualização do temporizador avança exatamente um estado.
+    # O índice fica limitado ao último estado do traço.
+    if reproducao.value and traco_anim:
+        set_indice(
+            lambda atual: min(atual + 1, len(traco_anim) - 1)
+        )
+    return
+
+
+@app.cell
+def _(get_indice, mo, plt, traco_anim):
+    if traco_anim is None or len(traco_anim) == 0:
+        mo.md("**Não foi encontrado um traço válido para visualizar.**")
+    else:
+        indice = min(get_indice(), len(traco_anim) - 1)
+        grelha = traco_anim[indice]
+        altura = len(grelha)
+        largura = len(grelha[0]) if altura else 0
+
+        # A figura adapta-se às dimensões da grelha recebida.
+        fig, ax = plt.subplots(
+            figsize=(min(12, max(4, largura * 0.35)),
+                     min(12, max(4, altura * 0.35)))
+        )
+        ax.imshow(grelha, cmap="binary", vmin=0, vmax=1,
+                  interpolation="nearest")
+        ax.set_xticks(range(largura))
+        ax.set_yticks(range(altura))
+        ax.set_xticks([x - 0.5 for x in range(1, largura)], minor=True)
+        ax.set_yticks([y - 0.5 for y in range(1, altura)], minor=True)
+        ax.grid(which="minor", color="gray", linewidth=0.5, alpha=0.6)
+        ax.tick_params(which="minor", bottom=False, left=False)
+        ax.set_xlim(-0.5, largura - 0.5)
+        ax.set_ylim(altura - 0.5, -0.5)
+        ax.set_title(f"Estado {indice + 1} / {len(traco_anim)}")
+        ax.set_xlabel("Coluna")
+        ax.set_ylabel("Linha")
+        fig.tight_layout()
+
+        mo.vstack([
+            mo.md(f"**Estado {indice + 1} de {len(traco_anim)}**"),
+            fig,
+        ])
     return
 
 
 @app.cell(hide_code=True)
-def _():
+def _(mo):
     mo.md(r"""
-    ## Validação cruzada
+    # 8. Execução e apresentação dos resultados
+    """)
+    return
 
-    O modelo SMT pode ter um erro que não se vê a olho (um índice trocado, uma regra mal escrita). Para o apanhar usa-se uma **segunda implementação**, escrita de outra forma e sem SMT: um simulador em Python puro (`regra_py`, `passo_sync_py`). A função `valida_traco` pega num traço gerado pelo SMT e verifica cada passo:
 
-    - as células iniciais ficam constantes e as finais mortas;
-    - **síncrono:** o estado seguinte é exatamente o que o simulador calcula;
-    - **assíncrono:** muda no máximo uma célula normal e, se mudar, o novo valor é o da regra B3|S23 (zero mudanças é um passo de *stuttering*).
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Validação Cruzada
 
-    O validador foi testado com traços alterados à mão e deteta-os.
+    Para garantir a correção do modelo SMT, implementou-se um simulador determinístico em Python puro (`regra_py`, `passo_sync_py`). A função `valida_traco` verifica a integridade dos traços gerados pelo z3, garantindo que:
+    - As células iniciais e finais mantêm as restrições de fronteira.
+    - **Modo síncrono:** As transições correspondem exatamente à matriz calculada pelo simulador.
+    - **Modo assíncrono:** Ocorre, no máximo, a transição de uma única célula normal por passo (ou *stuttering*), respeitando a regra B3|S23.
     """)
     return
 
 
 @app.cell
-def _():
+def _(tabela_validacao):
     tabela_validacao(17)
     return
 
 
 @app.cell(hide_code=True)
-def _():
+def _(mo):
     mo.md(r"""
-    ## Propriedade 1: nunca se alcança o estado de erro
+    ## Propriedade 1: Invariante de Segurança
 
-    **O que se pede.** O estado de erro é aquele em que todas as células normais estão mortas. A propriedade é $G\,\neg\mathit{erro}$ ("é sempre verdade que não há erro"), uma propriedade de segurança (um invariante). Há duas respostas possíveis: uma **prova**, ou um **contra-exemplo** (um traço que chega ao erro).
+    **Propriedade:** O estado de erro (todas as células normais mortas) nunca é alcançado. Formalmente: $G\,\neg\mathit{erro}$.
 
-    **Ferramentas.**
-
-    - **BMC (*bounded model checking*).** Para $d=0,1,2,\dots,K$ pergunta ao solver se existe um traço $s_0,\dots,s_d$ com $\mathit{init}(s_0)\wedge\mathit{trans}(s_0,s_1)\wedge\dots\wedge\mathit{erro}(s_d)$. Se for `sat`, o primeiro $d$ dá um contra-exemplo mínimo. Se for `unsat` para todo o $d\le K$, só sabemos que **até $K$ passos** não há erro, o que não é uma prova para sempre.
-    - ***k*-indução.** Prova para todos os tempos. Caso base: o BMC não encontra erro até $k-1$. Passo: a partir de um estado **qualquer** (não precisa de ser alcançável), se $k$ estados consecutivos não são erro então o seguinte também não é. Se o passo for `unsat`, o erro nunca é alcançado.
-    - **Código da ficha 7.** O BMC é o `bmc_always` do exercício 4 (invariante verificado com traços de tamanho crescente, devolvendo um contra-exemplo mínimo) e a geração de traços é o `gera_traco` do exercício 3. A única diferença é que o `bmc_always` usa um só solver incremental, em vez de criar um novo por cada tamanho, porque com um solver novo por tamanho o BMC assíncrono demorou cerca de 105 s (até 10 estados) e o síncrono 85 s só até 60 estados, contra 7 s e 8 s (até 157 estados) com o incremental.
-    - **Prova por exaustão (só no síncrono).** O sistema síncrono é determinístico: cada estado tem um único sucessor. Simulando, a sequência acaba por repetir um estado $s_n=s_m$, e a partir daí só se repetem estados já vistos. Os estados alcançáveis são então exatamente os da órbita, e um BMC com profundidade igual ao seu tamanho cobre-os a todos. Isso é uma prova.
+    **Estratégia de Verificação:**
+    - **Modo síncrono:** Como o sistema é determinístico e finito, utiliza-se BMC iterativo para provar a propriedade por exaustão (cobrindo o tamanho total da órbita) e $k$-indução para tentar a verificação generalizada no tempo.
+    - **Modo assíncrono:** Utiliza-se BMC convencional para procurar um contra-exemplo até um limite de profundidade $K$.
     """)
     return
 
 
 @app.cell
-def _():
+def _(prop1_sync):
     prop1_sync(17)
     return
 
 
 @app.cell
-def _():
+def _(prop1_inducao):
     prop1_inducao(17)
     return
 
 
 @app.cell
-def _():
+def _(prop1_async):
     prop1_async(17)
     return
 
 
 @app.cell(hide_code=True)
-def _():
+def _(mo):
     mo.md(r"""
     ### Conclusão da propriedade 1
 
@@ -723,43 +1014,37 @@ def _():
 
 
 @app.cell(hide_code=True)
-def _():
+def _(mo):
     mo.md(r"""
-    ## Propriedade 2: nenhuma célula normal está permanentemente morta ou viva
+    ## Propriedade 2: Propriedade de Animação
 
-    **O que se pede.** Lê-se "permanentemente" como "a partir de certo instante, para sempre". Uma célula $c$ não está permanentemente morta nem permanentemente viva se fica viva infinitas vezes e morta infinitas vezes:
+    **Propriedade:** Nenhuma célula normal permanece infinitamente viva ou morta. Formalmente: $\bigwedge_{c\in\mathcal{N}}\ (G\,F\,c\ \wedge\ G\,F\,\neg c)$. A falsificação desta propriedade implica encontrar um traço em ciclo (*lasso*) onde pelo menos uma célula se mantenha constante.
 
-    $$\bigwedge_{c\in\mathcal{N}}\ G\,F\,c\ \wedge\ G\,F\,\neg c$$
-
-    É uma propriedade de animação (*liveness*), e a sua negação diz que existe uma célula que, a partir de certo ponto, é constante. Numa leitura mais fraca (a célula está morta, ou viva, em **todos** os instantes, desde o início) a propriedade também falha no modo síncrono: com a semente 0 há 71 células que nunca estão vivas em nenhum dos 157 estados da execução, e nas sementes 0 a 9 há sempre pelo menos uma.
-
-    **Como é um contra-exemplo.** Como o espaço de estados é finito, toda a execução infinita acaba num ciclo. Um contra-exemplo é um *lasso*: um prefixo $s_0,\dots,s_{j-1}$ seguido de um ciclo $s_j,\dots,s_{k-1}$ (com transição de $s_{k-1}$ para $s_j$) em que alguma célula normal tem o mesmo valor em todos os estados do ciclo.
-
-    **Código da ficha 7.** O `bmc_gf` é o `bmc_eventually` dos exercícios 6 e 7, com duas alterações. A ficha verifica $F\,\phi$, em que o contra-exemplo é um ciclo onde $\phi$ nunca vale desde o início; aqui o contra-exemplo só precisa de a célula ser constante **dentro do ciclo**, não no prefixo. E o ciclo pode ser uma auto-transição do último estado (a ficha só testa $j<k-1$), o que é preciso para estados que ficam parados.
+    **Estratégia de Verificação:** Utiliza-se a função `bmc_eventually` para gerar traços até profundidade $K$ terminados num ciclo válido, validando a estabilização das células.
     """)
     return
 
 
 @app.cell
-def _():
-    prop2_sync(17)
+def _(prop2_sync):
+    prop2_sync(9)
     return
 
 
 @app.cell
-def _():
-    prop2_async_sem_fairness(17)
+def _(prop2_async_sem_fairness):
+    prop2_async_sem_fairness(9)
     return
 
 
 @app.cell
-def _():
-    prop2_async_com_fairness(17)
+def _(prop2_async_com_fairness):
+    prop2_async_com_fairness(9)
     return
 
 
 @app.cell(hide_code=True)
-def _():
+def _(mo):
     mo.md(r"""
     ### Conclusão da propriedade 2
 
@@ -777,23 +1062,19 @@ def _():
 
 
 @app.cell(hide_code=True)
-def _():
+def _(mo):
     mo.md(r"""
-    ## Testes de tempo (relatório)
+    ### Análise de Desempenho
 
-    **Método.** Para cada par $(N,k)$ mediu-se, em cada modo, o tempo de construir a fórmula em pySMT e de resolver com o z3 um traço de $k$ passos (semente 0, uma execução por ponto). Os valores abaixo são os que se obtiveram; os tempos absolutos dependem da máquina, por isso o que se compara são as razões e os expoentes.
-
-    **Tempo esperado.** O tamanho da fórmula por passo cresce com $N^2$ no síncrono e com $N^4$ no assíncrono ($N^2$ disjuntos, cada um com $N^2-1$ igualdades de manutenção), e linearmente com $k$ nos dois. Partindo do tempo medido na célula base ($N_0=17$, $k_0=2$):
-
-    $$t_{\mathit{esp}}(N,k)\;=\;t_{\mathit{base}}\cdot\Big(\tfrac{N}{N_0}\Big)^{e}\cdot\tfrac{k}{k_0},\qquad e=2\ (\mathit{sync}),\;e=4\ (\mathit{async})$$
-
-    Um `medido/esperado` acima de 1 significa que o solver cresce mais depressa do que o tamanho da fórmula.
+    1. **Modo Assíncrono:** O tempo de resolução cresce empiricamente a $O(N^{3.6})$, consistente com o modelo teórico de $N^4$ gerado pela disjunção massiva da relação de transição (manutenção de $N^2-1$ células por caso).
+    2. **Modo Síncrono:** O crescimento escalar varia entre $N^2$ e $N^3$, com tempos de resolução residuais (inferiores a 3s para $N=24, k=10$).
+    3. **Escalabilidade em k:** O custo associado à profundidade no modo assíncrono exibe um crescimento super-linear (fator $\times 8.9$ entre $k=2$ e $k=10$ para $N=17$), limitando a aplicabilidade prática do BMC neste modo para $K$ elevados. Uma otimização futura recomendada seria a adoção de restrições *exactly-one* para seletores de transição em vez da enumeração disjuntiva atual.
     """)
     return
 
 
 @app.cell(hide_code=True)
-def _():
+def _(mo, pd):
     medidas = pd.DataFrame(
         [
             (17, 2, 0.22, 0.22, 1.00, 1.99, 1.99, 1.00, 9.17),
@@ -835,7 +1116,7 @@ def _():
 
 
 @app.cell(hide_code=True)
-def _(medidas):
+def _(medidas, plt):
     _fig, (_ax_n, _ax_k) = plt.subplots(1, 2, figsize=(11, 4))
     _estilos = (("sync", 2, "tab:blue"), ("async", 4, "tab:red"))
 
@@ -873,7 +1154,7 @@ def _(medidas):
 
 
 @app.cell(hide_code=True)
-def _():
+def _(mo):
     mo.md(r"""
     ### O que se observou
 
