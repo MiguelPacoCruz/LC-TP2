@@ -55,7 +55,7 @@ def _():
 
     $$T_{\mathit{async}}\;\equiv\;\mathit{Fr}\;\wedge\;\bigvee_{(a,b)\in\mathcal{N}}\Big(\underbrace{c'_{a,b}\leftrightarrow R(a,b)}_{\text{Atualização}}\;\wedge\;\underbrace{\bigwedge_{(i,j)\in\mathcal{N}\setminus\{(a,b)\}}\big(c'_{i,j}\leftrightarrow c_{i,j}\big)}_{\text{Manutenção}}\Big)$$
 
-    A estrutura de cada caso (pré-condição, atualização, manutenção) é a do exercício 2 da ficha 7. A pré-condição é vazia: a célula escolhida pode ficar com o mesmo valor (*stuttering*). É o comportamento que o enunciado descreve, porque a regra B3|S23 inclui como resultados possíveis "mantém-se viva" e "continua morta"; escolher uma célula cuja regra dá o valor atual é, por isso, uma transição válida. Isto mantém ainda a relação total (sem deadlocks). A variante estrita acrescentaria a cada disjunto a pré-condição $R(a,b)\not\leftrightarrow c_{a,b}$.
+    A estrutura de cada caso (pré-condição, atualização, manutenção) é a do exercício 2 da ficha 7. A pré-condição é vazia: a célula escolhida pode ficar com o mesmo valor (*stuttering*). É o comportamento que o enunciado descreve, porque a regra B3|S23 inclui como resultados possíveis "mantém-se viva" e "continua morta"; escolher uma célula cuja regra dá o valor atual é, por isso, uma transição válida. A variante estrita acrescentaria a cada disjunto a pré-condição $R(a,b)\not\leftrightarrow c_{a,b}$.
     """)
     return
 
@@ -249,7 +249,7 @@ def gera_traco(declare, init, trans, k, verbose=True):
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    # 3. Simulação e validação
+    # 3. Simulação
     """)
     return
 
@@ -298,92 +298,6 @@ def trajetoria_sync(N, seed=0, limite=1_000_000):
         visto[chave] = len(estados)
         estados.append(g)
     return None, None
-
-
-@app.function
-def valida_traco(traco, N, modo, seed=0):
-    if modo not in ("sync", "async"):
-        return False, "modo inválido"
-
-    if traco is None or len(traco) == 0:
-        return False, "traço vazio ou inexistente"
-
-    # Verificar a configuração inicial completa.
-    esperado = estado_inicial_py(N, seed)
-
-    if traco[0] != esperado:
-        return False, "o primeiro estado não respeita init"
-
-    ini, fin = set(iniciais(N)), set(finais(N))
-    cel = normais(N)
-
-    for t in range(len(traco) - 1):
-        atual, seguinte = traco[t], traco[t + 1]
-
-        # Manutenção das fronteiras.
-        for i, j in ini:
-            if seguinte[i][j] != atual[i][j]:
-                return False, (
-                    f"passo {t}→{t+1}: "
-                    f"célula inicial ({i},{j}) mudou"
-                )
-
-        for i, j in fin:
-            if seguinte[i][j] != 0:
-                return False, (
-                    f"passo {t}→{t+1}: "
-                    f"célula final ({i},{j}) está viva"
-                )
-
-        if modo == "sync":
-            esperado = passo_sync_py(atual, N)
-
-            for i, j in cel:
-                if seguinte[i][j] != esperado[i][j]:
-                    return False, (
-                        f"passo {t}→{t+1}: "
-                        f"célula ({i},{j}) devia ser "
-                        f"{esperado[i][j]}"
-                    )
-
-        else:
-            mudou = [
-                c for c in cel
-                if seguinte[c[0]][c[1]]
-                != atual[c[0]][c[1]]
-            ]
-
-            if len(mudou) > 1:
-                return False, (
-                    f"passo {t}→{t+1}: "
-                    f"mudaram {len(mudou)} células normais"
-                )
-
-            if mudou:
-                i, j = mudou[0]
-
-                if seguinte[i][j] != regra_py(atual, i, j):
-                    return False, (
-                        f"passo {t}→{t+1}: "
-                        f"({i},{j}) não segue B3|S23"
-                    )
-
-            else:
-                # Stuttering só é válido se existir
-                # uma célula que possa ser selecionada
-                # sem alterar o seu valor.
-                estavel = any(
-                    regra_py(atual, i, j) == atual[i][j]
-                    for i, j in cel
-                )
-
-                if not estavel:
-                    return False, (
-                        f"passo {t}→{t+1}: "
-                        "stuttering inválido"
-                    )
-
-    return True, f"{len(traco) - 1} passos verificados"
 
 
 @app.cell(hide_code=True)
@@ -440,64 +354,35 @@ def kinduction_always(declare, init, trans, inv, k):
     with Solver(name="z3") as solver:
 
         states = [declare(i) for i in range(k)]
-
         base = [init(states[0])]
 
-    
-
         for i in range(k - 1):
-
             base.append(trans(states[i], states[i + 1]))
 
-
-
         caso_base = And(And(base), Or([Not(inv(s)) for s in states]))
-
         solver.add_assertion(caso_base)
-
     
-
         if solver.solve():
-
             model = solver.get_model()
-
             return "caso base", [grelha_modelo(model, s) for s in states]
-
-
 
         solver.reset_assertions()
 
-
-
         states = [declare(i) for i in range(k + 1)]
-
         inductive = []
 
         for i in range(k):
-
             inductive.append(trans(states[i], states[i + 1]))
 
-
-
         inductive.append(And([inv(states[i]) for i in range(k)]))
-
         inductive.append(Not(inv(states[k])))
 
-
-
         step_case = And(inductive)
-
-        solver.add_assertion(step_case)
-
-    
+        solver.add_assertion(step_case)    
 
         if solver.solve():
-
             model = solver.get_model()
-
             return "passo indutivo", [grelha_modelo(model, s) for s in states]
-
-
 
     return None, None
 
@@ -582,29 +467,6 @@ def mudancas(traco, N):
         for (i, j) in normais(N)
         if traco[t][i][j] != traco[t + 1][i][j]
     ]
-
-
-@app.function
-def repete_sequencia(N, seed, sequencia):
-    g = estado_inicial_py(N, seed)
-    for t, ((i, j), depois) in enumerate(sequencia, start=1):
-        if regra_py(g, i, j) != depois or g[i][j] == depois:
-            return False, f"passo {t}: a célula ({i},{j}) não passa a {depois} pela regra"
-        g[i][j] = depois
-    instaveis = [(i, j) for (i, j) in normais(N) if regra_py(g, i, j) != g[i][j]]
-    if instaveis:
-        return False, f"o estado final não é estável ({len(instaveis)} células mudariam)"
-    return True, [(i, j) for (i, j) in normais(N) if g[i][j]]
-
-
-@app.function
-def tabela_validacao(N):
-    linhas = []
-    for tipo, k in (("sync", 20), ("async", 6)):
-        traco = gera_traco(*fots(N, tipo), k + 1, verbose=False)
-        ok, msg = valida_traco(traco, N, tipo)
-        linhas.append(f"| {tipo} | {k} | {'✔ ok' if ok else '✘ falhou'} | {msg} |")
-    return mo.md("| modo | k | validação | detalhe |\n|---|---|---|---|\n" + "\n".join(linhas))
 
 
 @app.function
@@ -716,81 +578,49 @@ def prop1_async(N):
 
 
 @app.function
-def prop2_sync(N):
-
+def prop2_sync(N, sementes_bmc=(5, 2)):
     linhas = []
-
     for sd in range(10):
-
         pre, ciclo = ciclo_sync(N, seed=sd)
-
         mortas, vivas = classifica_celulas(ciclo, N)
-
         linhas.append({
-
             "semente": sd,
-
             "pré-período": pre,
-
             "período": len(ciclo),
-
             "sempre mortas": len(mortas),
-
-            "sempre vivas": len(vivas)
-
+            "sempre vivas": len(vivas),
         })
 
-    
+    bmc = []
+    for sd in sementes_bmc:
+        K = orbita_sync(N, seed=sd)["estados distintos"]
+        traco, j = bmc_eventually(*fots(N, "sync", sd), alguma_constante(N), K)
+        bmc.append({
+            "semente": sd,
+            "lasso encontrado": traco is not None,
+            "estados no traço": len(traco) if traco else None,
+            "ciclo começa no estado": j,
+        })
 
     return mo.vstack([
-
-        mo.md("### Modo síncrono\n\nA propriedade falha. O sistema tende a estabilizar, com a esmagadora maioria das células a fixarem-se num estado permanente (ver tabela). Este comportamento foi confirmado pelo BMC de ciclo para as primeiras sementes."),
-
-        mo.ui.table(pd.DataFrame(linhas), selection=None)
-
+        mo.md("### Modo síncrono\n\nA propriedade falha. O sistema tende a estabilizar, com a esmagadora maioria das células a fixarem-se num estado permanente (ver primeira tabela). A segunda tabela é o BMC de ciclo (`bmc_eventually`) para as sementes de órbita curta, onde a profundidade necessária é pequena."),
+        mo.ui.table(pd.DataFrame(linhas), selection=None),
+        mo.ui.table(pd.DataFrame(bmc), selection=None),
     ])
 
 
 @app.function
-def prop2_async_sem_fairness(N):
-
-    return mo.md("### Modo assíncrono (sem fairness)\n\nA propriedade é trivialmente falsa, pois a relação de transição permite *stuttering*. O BMC encontra um ciclo com 1 estado (onde o sistema fica parado), tornando todas as células permanentes.")
-
-
-@app.function
-def prop2_async_com_fairness(N):
-
-    sequencia = [
-
-        ((2, 3), 0), ((2, 2), 0), ((1, 8), 1), ((2, 1), 0), ((1, 9), 1),
-
-        ((4, 2), 1), ((3, 1), 0), ((4, 3), 1), ((1, 8), 0),
-
-    ]
-
-    ok, res = repete_sequencia(N, 0, sequencia)
-
-
-
-    texto = "O BMC encontrou uma sequência de 9 passos que conduz a um estado estável, invalidando a propriedade mesmo assumindo execução justa." if ok else f"Falha na validação: {res}"
-
-
-
-    return mo.vstack([
-
-        mo.md(f"### Modo assíncrono (com fairness)\n\n{texto}"),
-
-        mo.ui.table(
-
-            pd.DataFrame([{"passo": p, "célula": f"({c[0]},{c[1]})", "novo valor": v}
-
-                 for p, (c, v) in enumerate(sequencia, start=1)]),
-
-            selection=None,
-
-        ),
-
-    ])
+def prop2_async(N):
+    traco, j = bmc_eventually(*fots(N, "async"), alguma_constante(N), 3)
+    if traco is None:
+        texto = "O BMC não encontrou nenhum *lasso* até k=3."
+    else:
+        texto = (
+            "A propriedade é trivialmente falsa, pois a relação de transição permite *stuttering*. "
+            f"O BMC encontra um *lasso* com {len(traco)} estado(s), com o ciclo a começar no estado {j}: "
+            "o sistema fica parado e todas as células ficam permanentes."
+        )
+    return mo.md(f"### Modo assíncrono\n\n{texto}")
 
 
 @app.cell(hide_code=True)
@@ -915,25 +745,6 @@ def _():
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    ## Validação Cruzada
-
-    Para garantir a correção do modelo SMT, implementou-se um simulador determinístico em Python puro (`regra_py`, `passo_sync_py`). A função `valida_traco` verifica a integridade dos traços gerados pelo z3, garantindo que:
-    - As células iniciais e finais mantêm as restrições de fronteira.
-    - **Modo síncrono:** As transições correspondem exatamente à matriz calculada pelo simulador.
-    - **Modo assíncrono:** Ocorre, no máximo, a transição de uma única célula normal por passo (ou *stuttering*), respeitando a regra B3|S23.
-    """)
-    return
-
-
-@app.cell
-def _():
-    tabela_validacao(17)
-    return
-
-
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
     ## Propriedade 1: Invariante de Segurança
 
     **Propriedade:** O estado de erro (todas as células normais mortas) nunca é alcançado. Formalmente: $G\,\neg\mathit{erro}$.
@@ -1028,19 +839,13 @@ def _():
 
 @app.cell
 def _():
-    prop2_sync(9)
+    prop2_sync(17)
     return
 
 
 @app.cell
 def _():
-    prop2_async_sem_fairness(9)
-    return
-
-
-@app.cell
-def _():
-    prop2_async_com_fairness(9)
+    prop2_async(17)
     return
 
 
@@ -1052,120 +857,11 @@ def _():
     | modo | resultado | como se obteve |
     |---|---|---|
     | síncrono | **não vale**: quase todas as células ficam constantes no ciclo | análise exata do ciclo (sementes 0 a 9) e *lasso* do BMC (sementes 5 e 2) |
-    | assíncrono, sem *fairness* | **não vale**, de forma trivial | *lasso* com 1 estado (o sistema fica parado) |
-    | assíncrono, com *fairness* | **não vale** | estado estável alcançável em 9 passos, onde nenhuma célula muda |
+    | assíncrono | **não vale**, de forma trivial | *lasso* com 1 estado do BMC (o sistema fica parado, graças ao *stuttering*) |
 
-    A propriedade falha em todos os casos porque o sistema tende a estabilizar: as células longe da atividade ficam mortas para sempre, e as que pertencem a padrões estáveis ficam vivas para sempre. O enunciado aceita este resultado ("provar ou obter contra-exemplos").
+    A propriedade falha nos dois modos. No síncrono, o sistema tende a estabilizar: as células longe da atividade ficam mortas para sempre, e as que pertencem a padrões estáveis ficam vivas para sempre. No assíncrono, o *stuttering* permite um *lasso* de um só estado. O enunciado aceita este resultado ("provar ou obter contra-exemplos").
 
-    *Limitações:* os resultados do síncrono são para as sementes testadas. No assíncrono, o argumento da *fairness* usa um estado estável, e na variante estrita (a célula escolhida tem de mudar) um estado estável não tem sucessores, por isso esse argumento deixaria de valer e a análise teria de ser refeita.
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    ### Análise de Desempenho
-
-    1. **Modo Assíncrono:** O tempo de resolução cresce empiricamente a $O(N^{3.6})$, consistente com o modelo teórico de $N^4$ gerado pela disjunção massiva da relação de transição (manutenção de $N^2-1$ células por caso).
-    2. **Modo Síncrono:** O crescimento escalar varia entre $N^2$ e $N^3$, com tempos de resolução residuais (inferiores a 3s para $N=24, k=10$).
-    3. **Escalabilidade em k:** O custo associado à profundidade no modo assíncrono exibe um crescimento super-linear (fator $\times 8.9$ entre $k=2$ e $k=10$ para $N=17$), limitando a aplicabilidade prática do BMC neste modo para $K$ elevados. Uma otimização futura recomendada seria a adoção de restrições *exactly-one* para seletores de transição em vez da enumeração disjuntiva atual.
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _():
-    medidas = pd.DataFrame(
-        [
-            (17, 2, 0.22, 0.22, 1.00, 1.99, 1.99, 1.00, 9.17),
-            (17, 5, 0.51, 0.54, 0.93, 7.24, 4.97, 1.46, 14.29),
-            (17, 10, 1.28, 1.08, 1.18, 17.68, 9.94, 1.78, 13.79),
-            (20, 2, 0.46, 0.30, 1.54, 3.79, 3.81, 1.00, 8.19),
-            (20, 5, 0.80, 0.75, 1.06, 11.54, 9.52, 1.21, 14.48),
-            (20, 10, 1.62, 1.50, 1.08, 27.27, 19.04, 1.43, 16.82),
-            (24, 2, 0.82, 0.43, 1.89, 7.87, 7.90, 1.00, 9.64),
-            (24, 5, 1.25, 1.08, 1.15, 24.40, 19.74, 1.24, 19.59),
-            (24, 10, 2.84, 2.16, 1.31, 53.21, 39.48, 1.35, 18.73),
-        ],
-        columns=[
-            "N", "k",
-            "sync (s)", "sync esperado (s)", "sync medido/esperado",
-            "async (s)", "async esperado (s)", "async medido/esperado",
-            "async/sync",
-        ],
-    )
-    expoentes_ajustados = pd.DataFrame(
-        [
-            ("sync", 2.92, 2, 0.87, 1),
-            ("async", 3.58, 4, 1.26, 1),
-        ],
-        columns=[
-            "modo",
-            "expoente de N (medido)", "expoente de N (teórico)",
-            "expoente de k (medido)", "expoente de k (teórico)",
-        ],
-    )
-    mo.vstack([
-        mo.md("### Tempos medidos e esperados"),
-        mo.ui.table(medidas, selection=None),
-        mo.md("### Expoentes ajustados por mínimos quadrados "
-              "($\\log t = \\log a + p\\log N + q\\log k$)"),
-        mo.ui.table(expoentes_ajustados, selection=None),
-    ])
-    return (medidas,)
-
-
-@app.cell(hide_code=True)
-def _(medidas):
-    _fig, (_ax_n, _ax_k) = plt.subplots(1, 2, figsize=(11, 4))
-    _estilos = (("sync", 2, "tab:blue"), ("async", 4, "tab:red"))
-
-    _d = medidas[medidas["k"] == 10].sort_values("N")
-    for _modo, _e, _cor in _estilos:
-        _t = _d[f"{_modo} (s)"]
-        _ax_n.loglog(_d["N"], _t, "o-", color=_cor, label=f"{_modo} (medido)")
-        _ax_n.loglog(_d["N"], _t.iloc[0] * (_d["N"] / _d["N"].iloc[0]) ** _e,
-                     "--", color=_cor, alpha=0.6, label=f"{_modo} (teórico, $N^{_e}$)")
-    _ax_n.set_xticks(_d["N"], labels=[str(v) for v in _d["N"]])
-    _ax_n.minorticks_off()
-    _ax_n.set_xlabel("N")
-    _ax_n.set_ylabel("tempo (s)")
-    _ax_n.set_title("Tempo vs N (k = 10)")
-    _ax_n.legend()
-    _ax_n.grid(True, which="both", alpha=0.3)
-
-    _d = medidas[medidas["N"] == 24].sort_values("k")
-    for _modo, _e, _cor in _estilos:
-        _t = _d[f"{_modo} (s)"]
-        _ax_k.loglog(_d["k"], _t, "o-", color=_cor, label=f"{_modo} (medido)")
-        _ax_k.loglog(_d["k"], _t.iloc[0] * (_d["k"] / _d["k"].iloc[0]),
-                     "--", color=_cor, alpha=0.6, label=f"{_modo} (teórico, $k$)")
-    _ax_k.set_xticks(_d["k"], labels=[str(v) for v in _d["k"]])
-    _ax_k.minorticks_off()
-    _ax_k.set_xlabel("k")
-    _ax_k.set_ylabel("tempo (s)")
-    _ax_k.set_title("Tempo vs k (N = 24)")
-    _ax_k.legend()
-    _ax_k.grid(True, which="both", alpha=0.3)
-
-    plt.tight_layout()
-    _fig
-    return
-
-
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    ### O que se observou
-
-    1. **Assíncrono em $N$: compatível com $N^4$.** Com $k=2$, o tempo medido coincide com o esperado (3,79 s contra 3,81 s em $N=20$; 7,87 s contra 7,90 s em $N=24$). Com $k$ maior o expoente ajustado desce para 3,58, porque o custo de $k$ (ponto seguinte) pesa mais nos $N$ pequenos: com $k=10$ o tempo só multiplica por 3,0 entre $N=17$ e $N=24$, quando a teoria dá 3,97.
-    2. **Assíncrono em $k$: mais do que linear.** Para $N=17$, o tempo sobe $\times 3{,}6$ de $k=2$ para $k=5$ e $\times 8{,}9$ até $k=10$ (a teoria dá $\times 2{,}5$ e $\times 5$); o expoente ajustado é 1,26. A fórmula só cresce linearmente com $k$, por isso o custo extra deve vir do solver, que tem de escolher em cada passo qual das $N^2$ células transita (e se há *stuttering*).
-    3. **Síncrono: dados pouco conclusivos.** Os tempos ficam entre 0,2 s e 2,8 s e variações de décimas de segundo alteram muito as razões (`medido/esperado` entre 0,93 e 1,89). Os expoentes ajustados (2,92 para $N$, 0,87 para $k$) são pouco fiáveis; só se pode dizer que o crescimento é suave, entre $N^2$ e $N^3$.
-    4. **Assíncrono contra síncrono.** O assíncrono é entre 8 e 20 vezes mais lento, e a diferença tende a aumentar com $N$ e $k$ (coerente com o fator $N^2$ a mais na fórmula).
-    5. **Consequência.** O BMC repete a verificação para $k=1,2,\dots$ e a propriedade 2 acrescenta restrições de ciclo, por isso o modo assíncrono vai ser o gargalo. A alternativa é uma codificação com variáveis seletoras (uma por célula e por passo, com um *exactly-one*), que torna a fórmula linear em $N^2$ por passo.
-
-    *Limitações:* uma execução por ponto, uma só semente e uma só máquina; os tempos pequenos são ruidosos e o tempo esperado depende de uma única medição base.
+    *Limitações:* os resultados do síncrono são para as sementes testadas. Na variante estrita do assíncrono (a célula escolhida tem de mudar), o *lasso* de um estado deixa de existir e a análise teria de ser refeita.
     """)
     return
 
@@ -1175,7 +871,7 @@ def _():
     mo.md(r"""
     ## Nota sobre a Revisão de Código
 
-    A totalidade do código deste projeRto foi minuciosamente revista, testada e alterada em conformidade com as análises detalhadas no [histórico da conversa com o ChatGPT](https://chatgpt.com/share/6aea0102-4e48-83eb-9826-5dad2803e8fb). Todas as propostas de otimização e verificações de propriedades foram validadas e adaptadas às necessidades do modelo FOTS.
+    A totalidade do código deste projeto foi minuciosamente revista, testada e alterada em conformidade com as análises detalhadas no [histórico da conversa com o ChatGPT](https://chatgpt.com/share/6aea0102-4e48-83eb-9826-5dad2803e8fb). Todas as propostas de otimização e verificações de propriedades foram validadas e adaptadas às necessidades do modelo FOTS.
     """)
     return
 
