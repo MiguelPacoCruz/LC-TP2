@@ -301,29 +301,88 @@ def trajetoria_sync(N, seed=0, limite=1_000_000):
 
 
 @app.function
-def valida_traco(traco, N, modo):
-    ini, fin = set(iniciais(N)), set(finais(N))
-    for t in range(len(traco) - 1):
-        atual, seguinte = traco[t], traco[t + 1]
-        for (i, j) in ini:
-            if seguinte[i][j] != atual[i][j]:
-                return False, f"passo {t}→{t+1}: célula inicial ({i},{j}) mudou"
-        for (i, j) in fin:
-            if seguinte[i][j] != 0:
-                return False, f"passo {t}→{t+1}: célula final ({i},{j}) está viva"
-        if modo == "sync":
-            esperado = passo_sync_py(atual, N)
-            for (i, j) in normais(N):
-                if seguinte[i][j] != esperado[i][j]:
-                    return False, f"passo {t}→{t+1}: célula ({i},{j}) devia ser {esperado[i][j]}"
-        else:
-            mudou = [(i, j) for (i, j) in normais(N) if seguinte[i][j] != atual[i][j]]
-            if len(mudou) > 1:
-                return False, f"passo {t}→{t+1}: mudaram {len(mudou)} células normais"
-            if mudou:
-                i, j = mudou[0]
-                if seguinte[i][j] != regra_py(atual, i, j):
-                    return False, f"passo {t}→{t+1}: ({i},{j}) não segue a regra"
+def valida_traco(traco, N, modo, seed=0):
+    if modo not in ("sync", "async"):
+        return False, "modo inválido"
+
+    if traco is None or len(traco) == 0:
+        return False, "traço vazio ou inexistente"
+
+    # Verificar a configuração inicial completa.
+    esperado = estado_inicial_py(N, seed)
+
+    if traco[0] != esperado:
+        return False, "o primeiro estado não respeita init"
+
+    ini, fin = set(iniciais(N)), set(finais(N))
+    cel = normais(N)
+
+    for t in range(len(traco) - 1):
+        atual, seguinte = traco[t], traco[t + 1]
+
+        # Manutenção das fronteiras.
+        for i, j in ini:
+            if seguinte[i][j] != atual[i][j]:
+                return False, (
+                    f"passo {t}→{t+1}: "
+                    f"célula inicial ({i},{j}) mudou"
+                )
+
+        for i, j in fin:
+            if seguinte[i][j] != 0:
+                return False, (
+                    f"passo {t}→{t+1}: "
+                    f"célula final ({i},{j}) está viva"
+                )
+
+        if modo == "sync":
+            esperado = passo_sync_py(atual, N)
+
+            for i, j in cel:
+                if seguinte[i][j] != esperado[i][j]:
+                    return False, (
+                        f"passo {t}→{t+1}: "
+                        f"célula ({i},{j}) devia ser "
+                        f"{esperado[i][j]}"
+                    )
+
+        else:
+            mudou = [
+                c for c in cel
+                if seguinte[c[0]][c[1]]
+                != atual[c[0]][c[1]]
+            ]
+
+            if len(mudou) > 1:
+                return False, (
+                    f"passo {t}→{t+1}: "
+                    f"mudaram {len(mudou)} células normais"
+                )
+
+            if mudou:
+                i, j = mudou[0]
+
+                if seguinte[i][j] != regra_py(atual, i, j):
+                    return False, (
+                        f"passo {t}→{t+1}: "
+                        f"({i},{j}) não segue B3|S23"
+                    )
+
+            else:
+                # Stuttering só é válido se existir
+                # uma célula que possa ser selecionada
+                # sem alterar o seu valor.
+                estavel = any(
+                    regra_py(atual, i, j) == atual[i][j]
+                    for i, j in cel
+                )
+
+                if not estavel:
+                    return False, (
+                        f"passo {t}→{t+1}: "
+                        "stuttering inválido"
+                    )
+
     return True, f"{len(traco) - 1} passos verificados"
 
 
@@ -784,7 +843,7 @@ def _(set_indice):
     # O menu permite escolher o intervalo entre estados.
     reproducao = mo.ui.refresh(
         options=[0.1, 0.2, 0.5, 1.0],
-        default_interval=0.2,
+        default_interval=None,
         label="Reproduzir / Pausar — intervalo",
     )
     reiniciar = mo.ui.button(
@@ -914,14 +973,14 @@ def _(correr_teste):
             {"semente": 8, "pre-período": 998, "período": 1, "estados distintos": 999, "erro na órbita": False},
             {"semente": 9, "pre-período": 774, "período": 1, "estados distintos": 775, "erro na órbita": False}
         ])
-    
+
         veredito = "O BMC não encontrou contra-exemplo até d=156. Sendo K o tamanho total da órbita, prova-se por exaustão que o estado de erro é inalcançável (para a semente 0)."
-    
+
         resultado_prop1 = mo.vstack([
             mo.md(f"### Modo síncrono (Prova por Exaustão)\n\n{veredito}\n\nA tabela demonstra a estabilização para outras sementes:\n\n*(Resultados em cache. Para executar a prova formal no z3, assinale a caixa acima)*"),
             mo.ui.table(tab_hardcoded, selection=None)
         ])
-    
+
     resultado_prop1
     return
 
@@ -1107,6 +1166,16 @@ def _():
     5. **Consequência.** O BMC repete a verificação para $k=1,2,\dots$ e a propriedade 2 acrescenta restrições de ciclo, por isso o modo assíncrono vai ser o gargalo. A alternativa é uma codificação com variáveis seletoras (uma por célula e por passo, com um *exactly-one*), que torna a fórmula linear em $N^2$ por passo.
 
     *Limitações:* uma execução por ponto, uma só semente e uma só máquina; os tempos pequenos são ruidosos e o tempo esperado depende de uma única medição base.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ## Nota sobre a Revisão de Código
+
+    A totalidade do código deste projeRto foi minuciosamente revista, testada e alterada em conformidade com as análises detalhadas no [histórico da conversa com o ChatGPT](https://chatgpt.com/share/6aea0102-4e48-83eb-9826-5dad2803e8fb). Todas as propostas de otimização e verificações de propriedades foram validadas e adaptadas às necessidades do modelo FOTS.
     """)
     return
 
